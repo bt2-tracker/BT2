@@ -28,6 +28,7 @@ void webAudioPause(bool pause);
 void webAudioLock(void);
 void webAudioUnlock(void);
 uint64_t webAudioPerfCounter(void); // replaces SDL_GetPerformanceCounter() on the audio thread
+void webAudioSetLatencyFrames(int32_t frames); // ft2_audio.c
 
 // main loop
 void webInit(void);              // before the window is created
@@ -37,7 +38,20 @@ void webWaitForNextFrame(void);  // gives control back to the browser until the 
 void webGetWindowSize(int32_t *w, int32_t *h);
 bool webIsTouchDevice(void);
 
+void webLongTaskYield(void); // call often during long work on the main thread (WAV rendering)
+
+// keyboard
+SDL_Keycode webFixKeycode(SDL_Scancode scancode, SDL_Keycode keycode);
+void webToggleFullscreen(void); // Alt+Enter: the browser's fullscreen
+
 // files
-void webSyncFiles(void); // save the in-app file system to the browser's storage (IndexedDB)
+void webSyncFiles(void);
+bool webPrepareFile(const char *path); // download a library/Modland song before it is opened (false = failed)
+
+// Modland (online library)
+#define WEB_MODLAND_ROOT "/Modland"
+#define WEB_MODLAND_SEARCH_DIR "/Modland/~Search results"
+bool webModlandPrepare(void);              // loads the list (first time: from modland.com) and makes /Modland
+int32_t webModlandSearch(const char *query); // number of hits (in WEB_MODLAND_SEARCH_DIR), -1 = failed // save the in-app file system to the browser's storage (IndexedDB)
 
 #endif

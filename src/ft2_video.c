@@ -559,6 +559,12 @@ void leaveFullscreen(void)
 
 void toggleFullscreen(void)
 {
+#ifdef __EMSCRIPTEN__
+	// BerntTracker (web): use the browser's fullscreen for the whole page (keeps our layout and overlays)
+	webToggleFullscreen();
+	return;
+#endif
+
 	video.fullscreen ^= 1;
 
 	if (video.fullscreen)

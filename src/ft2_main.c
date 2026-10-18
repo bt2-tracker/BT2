@@ -226,11 +226,13 @@ int main(int argc, char *argv[])
 	SDL_ShowWindow(video.window);
 #endif
 
+#ifndef __EMSCRIPTEN__ // BerntTracker: the web page always fills the screen (fullscreen needs a tap there)
 	if (config.windowFlags & START_IN_FULLSCR)
 	{
 		video.fullscreen = true;
 		enterFullscreen();
 	}
+#endif
 
 #ifdef HAS_MIDI
 	// MIDI init can take several seconds, use thread

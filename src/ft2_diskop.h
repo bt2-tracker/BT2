@@ -42,6 +42,8 @@ void pbDiskOpRoot(void);
 #ifdef __EMSCRIPTEN__
 void pbDiskOpImport(void);
 void pbDiskOpExport(void);
+void pbDiskOpModland(void);
+void pbDiskOpFind(void);
 #endif
 int32_t getExtOffset(char *s, int32_t stringLen); // get byte offset of file extension (last '.')
 bool testDiskOpMouseDown(bool mouseHeldDown);

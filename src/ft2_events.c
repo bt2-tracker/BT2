@@ -467,6 +467,9 @@ static void handleSDLEvents(void)
 				SDL_RaiseWindow(video.window);
 			}
 
+#ifdef __EMSCRIPTEN__
+			if (webPrepareFile(event.drop.file)) // BerntTracker (web): library songs are downloaded first
+#endif
 			loadDroppedFile(event.drop.file);
 			SDL_free(event.drop.file);
 		}
@@ -499,10 +502,18 @@ static void handleSDLEvents(void)
 		}
 		else if (event.type == SDL_KEYUP)
 		{
+#ifdef __EMSCRIPTEN__
+			event.key.keysym.sym = webFixKeycode(event.key.keysym.scancode, event.key.keysym.sym);
+			setKeyModifiers((SDL_Keymod)event.key.keysym.mod); // modifiers as they were when this key was pressed
+#endif
 			keyUpHandler(event.key.keysym.scancode, event.key.keysym.sym);
 		}
 		else if (event.type == SDL_KEYDOWN)
 		{
+#ifdef __EMSCRIPTEN__
+			event.key.keysym.sym = webFixKeycode(event.key.keysym.scancode, event.key.keysym.sym);
+			setKeyModifiers((SDL_Keymod)event.key.keysym.mod); // modifiers as they were when this key was pressed
+#endif
 			keyDownHandler(event.key.keysym.scancode, event.key.keysym.sym, event.key.repeat);
 		}
 		else if (event.type == SDL_MOUSEBUTTONUP)

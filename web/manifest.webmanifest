@@ -6,7 +6,7 @@
   "scope": "./",
   "display": "fullscreen",
   "orientation": "landscape",
-  "background_color": "#2D3135",
+  "background_color": "#000000",
   "theme_color": "#2D3135",
   "icons": [
     { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },

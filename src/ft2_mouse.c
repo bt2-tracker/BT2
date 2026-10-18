@@ -587,7 +587,7 @@ static bool testPatternDataMouseDown(void)
 	if (ui.patternEditorShown)
 	{
 		const int32_t y1 = ui.extendedPatternEditor ? 71 : 176;
-		const int32_t y2 = ui.pattChanScrollShown ? 382 : 396;
+		const int32_t y2 = (ui.pattChanScrollShown ? 382 : 396) + SCREEN_EXTRA_H; // BerntTracker: taller screen
 
 		if (mouse.y >= y1 && mouse.y <= y2 && mouse.x >= 29 && mouse.x <= 602)
 		{

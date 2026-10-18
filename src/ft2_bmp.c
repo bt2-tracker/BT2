@@ -11,6 +11,7 @@
 #include "ft2_gfxdata.h"
 #include "ft2_bmp.h"
 #include "ft2_video.h"
+#include "gfxdata/ft2_bernt_about.h" // Bernttracker II-logo for About-skjermen
 
 enum
 {
@@ -81,7 +82,7 @@ bool loadBMPs(void)
 {
 	memset(&bmp, 0, sizeof (bmp));
 
-	bmp.ft2AboutLogo = loadBMPTo32Bit(ft2AboutLogoBMP);
+	bmp.ft2AboutLogo = loadBMPTo32Bit(bt2AboutLogoBMP); // BerntTracker: own logo (original: ft2AboutLogoBMP)
 	bmp.buttonGfx = loadBMPTo1Bit(buttonGfxBMP);
 	bmp.font1 = loadBMPTo1Bit(font1BMP);
 	bmp.font2 = loadBMPTo1Bit(font2BMP);

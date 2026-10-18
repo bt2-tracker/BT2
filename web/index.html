@@ -32,7 +32,7 @@ canvas#canvas {
 	position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
 	gap: 14px; background: var(--bg); z-index: 10; text-align: center; padding: 16px; box-sizing: border-box;
 }
-.overlay.hidden, button.hidden { display: none; }
+.overlay.hidden, button.hidden, .status.hidden, .row.hidden { display: none; }
 .logo { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
 .logo span { color: var(--accent); }
 .status { color: var(--dim); font-size: 15px; max-width: 520px; line-height: 1.4; }
@@ -51,6 +51,10 @@ button.big {
 	padding: 10px 16px; font-size: 15px; opacity: 0; transition: opacity .25s; pointer-events: none;
 }
 #toast.show { opacity: 1; }
+#net { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 30; background: #12161A;
+	color: var(--text); border: 1px solid #596169; border-radius: 8px; padding: 10px 16px; font-size: 15px; text-align: center; }
+#net .bar { margin-top: 8px; }
+#net.hidden { display: none; }
 button.small.on { background: #4F6E99; border-color: #7AA8EC; }
 button.small {
 	font: inherit; font-size: 15px; padding: 10px 18px; border-radius: 8px; cursor: pointer; min-height: 44px;
@@ -59,26 +63,77 @@ button.small {
 #diag { z-index: 15; justify-content: flex-start; padding-top: 40px; overflow-y: auto; }
 #diag pre { font: 14px/1.5 ui-monospace, Menlo, monospace; text-align: left; background: #12161A; padding: 12px 16px; border-radius: 8px; min-width: 300px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.appbox { max-width: 560px; font-size: 13px; color: var(--dim); line-height: 1.45; background: #23272B;
+	border: 1px solid #3B4045; border-radius: 8px; padding: 10px 14px; }
+#appStatus { color: var(--text); }
+.appnote { margin-top: 6px; font-size: 12px; }
+.appbox .bar { margin: 8px auto 0; }
+#updateText { color: #F0D070; margin-top: 6px; }
+.hidden.bar, div.hidden { display: none; }
+@media (max-height: 560px) { /* phones in landscape: let the start screen scroll */
+	#start { justify-content: flex-start; overflow-y: auto; gap: 10px; }
+	#start #credits { position: relative; bottom: auto; margin-top: 6px; }
+	.appnote { font-size: 11px; }
+}
 #credits { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 11px; color: #5D646C; }
 #credits a { color: #7D92AA; }
+/* start/loading screen: black with the FT2 about-screen starfield behind the 3D logo */
+#loading, #start { background: #000; }
+canvas.stars { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
+	image-rendering: pixelated; image-rendering: crisp-edges; }
+#loading > :not(.stars), #start > :not(.stars):not(#credits) { position: relative; z-index: 1; }
+#credits { z-index: 1; }
+img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 6px; pointer-events: none;
+	-webkit-user-drag: none; }
+@media (max-height: 560px) { img.logo3d { width: auto; height: 64px; margin: 0; } }
 </style>
 </head>
 <body>
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
 
 <div id="loading" class="overlay">
-	<div class="logo">Bernttracker <span>II</span></div>
+	<img class="logo3d" src="bt2-logo.png" alt="Bernttracker II" draggable="false"
+		onerror="this.outerHTML='&lt;div class=&quot;logo&quot;&gt;Bernttracker &lt;span&gt;II&lt;/span&gt;&lt;/div&gt;'">
 	<div class="bar"><div id="progress"></div></div>
 	<div class="status" id="loadStatus">Laster…</div>
 	<button class="small hidden" id="retry">Tar det lang tid? Trykk for å prøve igjen</button>
+	<div class="status hidden" id="alreadyOpen">Bernttracker II er allerede åpen i en annen fane eller et annet vindu.<br>
+		Bruk den, eller lukk den først (så ingenting du har gjort går tapt).</div>
+	<div class="row hidden" id="alreadyOpenButtons">
+		<button class="small" id="alreadyOpenRetry">Prøv igjen</button>
+		<button class="small" id="alreadyOpenAnyway">Åpne likevel</button>
+	</div>
 </div>
 
 <div id="start" class="overlay hidden">
-	<div class="logo">Bernttracker <span>II</span></div>
+	<img class="logo3d" src="bt2-logo.png" alt="Bernttracker II" draggable="false"
+		onerror="this.outerHTML='&lt;div class=&quot;logo&quot;&gt;Bernttracker &lt;span&gt;II&lt;/span&gt;&lt;/div&gt;'">
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.9 · 18.10.2026</div>
-	<button class="small" id="diagButton">Lydtest</button>
+	<div class="mode" id="versionLine"></div>
+	<div class="appbox" id="appBox">
+		<div id="appStatus">Sjekker om appen er lagret på denne enheten …</div>
+		<div class="bar hidden" id="appBar"><div id="appProgress"></div></div>
+		<div class="hidden" id="updateBox">
+			<div id="updateText"></div>
+			<div class="row" style="margin-top:8px">
+				<button class="small" id="updateNow">Oppdater nå</button>
+				<button class="small" id="updateLater">Senere</button>
+			</div>
+		</div>
+		<div class="appnote">Appen lagres på enheten og starter også uten nett. Den sjekker etter ny versjon hver gang
+			den åpnes, og du velger selv om du vil oppdatere. En oppdatering endrer bare selve programmet –
+			låtene, samplene, mappene og innstillingene dine blir aldri rørt.</div>
+		<div class="appnote hidden" id="homeHint">Tips: trykk Del-knappen i Safari og velg «Legg til på Hjem-skjerm»,
+			så får du Bernttracker som eget app-ikon i fullskjerm.</div>
+	</div>
+	<div class="status hidden" id="storageWarning" style="color:#F0B060">Kunne ikke lese de lagrede filene dine. For å beskytte dem lagres
+		ingenting i denne økten. Lukk appen helt og åpne den igjen.</div>
+	<div class="mode" id="pcHint" style="display:none">PC: trykk <b>Alt+Enter</b> for fullskjerm, da virker alle FT2-tastene.</div>
+	<div class="row">
+		<button class="small" id="diagButton">Lydtest</button>
+		<button class="small" id="backupButton">Sikkerhetskopi (zip)</button>
+	</div>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
 		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
@@ -108,12 +163,18 @@ button.small {
 </div>
 
 <div id="toast"></div>
+<div id="net" class="hidden"><div id="netText"></div><div class="bar"><div id="netProgress"></div></div></div>
 <input type="file" id="importInput" multiple style="display:none">
 
 <script>
 'use strict';
 (function () {
 	const $ = (id) => document.getElementById(id);
+
+	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
+	const BT2_VERSION = '0.13';
+	const BT2_DATE = '18.10.2026';
+	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
 
 	const BT2 = globalThis.BT2 = {
@@ -241,6 +302,7 @@ button.small {
 				BT2.node = node;
 				BT2.audioMode = name;
 				BT2.showAudioMode();
+				BT2.updateLatency();
 				return true;
 			} catch (e) {
 				console.error('Could not start the ' + name + ' engine', e);
@@ -295,6 +357,11 @@ button.small {
 			if (BT2.audioMode === 'worklet') return 128 + out;
 			if (BT2.audioMode === 'sp') return 2 * BT2.spSize + out;
 			return BT2.compatTarget + 128 + out;
+		},
+
+		// tell the program how far behind the sound is, so scopes and the pattern line up with it
+		updateLatency() {
+			try { if (typeof Module._webSetLatencyFrames === 'function') Module._webSetLatencyFrames(BT2.engineLatencyFrames()); } catch (e) {}
 		},
 
 		latencyMs() {
@@ -354,12 +421,15 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				BT2.compatConsumed = e.data.consumed;
 				const now = performance.now();
 				BT2.compatReportTime = now;
-				if (e.data.under && BT2.started) {
-					if (BT2.compatTarget < 4096) BT2.compatTarget += 128;
+				// (dropouts while the app is in the background or just came back don't count)
+				const settling = document.hidden || now - BT2.visibleSince < 1500;
+				if (e.data.under && BT2.started && !settling) {
+					if (BT2.compatTarget < 4096) { BT2.compatTarget += 128; BT2.updateLatency(); }
 					BT2.compatLastUnderrun = now;
 				} else if (now - BT2.compatLastUnderrun > 3000 && BT2.compatTarget > 384) {
 					BT2.compatTarget -= 128; // no dropouts for a while: try a smaller buffer again
 					BT2.compatLastUnderrun = now;
+					BT2.updateLatency();
 				}
 			};
 			BT2.compatNode = node;
@@ -403,7 +473,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 		// ---------- files (stored in the browser, kept between sessions)
 		syncFiles() {
-			if (!Module.bt2FS) return;
+			// only when the stored files were read in completely at startup (see bt2_pre.js)
+			if (!Module.bt2FS || !Module.bt2StorageOK) return;
 			if (BT2.syncing) { BT2.syncAgain = true; return; }
 			BT2.syncing = true;
 			Module.bt2FS.syncfs(false, (err) => {
@@ -421,27 +492,169 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			BT2.toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 		},
 
+		// ---------- importing files (Disk Op "Imp."): into the folder you are in, never over an existing file
+		USER_ROOT: '/home/web_user/BT2',
+		importDir() {
+			const dir = Module.bt2FS.cwd();
+			return (dir === BT2.USER_ROOT || dir.startsWith(BT2.USER_ROOT + '/')) ? dir : BT2.USER_ROOT;
+		},
+		mkdirs(dir) {
+			const FS = Module.bt2FS;
+			const parts = dir.split('/');
+			for (let i = 2; i <= parts.length; i++) {
+				const d = parts.slice(0, i).join('/');
+				if (d && !FS.analyzePath(d).exists) FS.mkdir(d);
+			}
+		},
+		uniquePath(path) { // "song.xm" -> "song (2).xm" if the name is taken
+			const FS = Module.bt2FS;
+			if (!FS.analyzePath(path).exists) return path;
+			const slash = path.lastIndexOf('/'), dot = path.lastIndexOf('.');
+			const stem = dot > slash ? path.slice(0, dot) : path, ext = dot > slash ? path.slice(dot) : '';
+			for (let i = 2; ; i++) {
+				const p = stem + ' (' + i + ')' + ext;
+				if (!FS.analyzePath(p).exists) return p;
+			}
+		},
+		cleanName(n) { return n.replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '_').slice(0, 200); },
+		async importFiles(files) {
+			const FS = Module.bt2FS;
+			const dir = BT2.importDir();
+			let n = 0, zips = 0;
+			for (const f of files) {
+				try {
+					const data = new Uint8Array(await f.arrayBuffer());
+					if (/\.zip$/i.test(f.name)) {
+						const entries = BT2.zipEntries(data);
+						// our own backup (everything under "BT2/"): put the files back where they were.
+						// Files that are already there are left alone (same name, other content: saved as "name (2)").
+						if (entries.length && entries.every((e) => e.name.startsWith('BT2/') || e.name.startsWith('Innstillinger/'))) {
+							let restored = 0;
+							for (const e of entries) {
+								if (e.dir || !e.name.startsWith('BT2/')) continue;
+								const parts = e.name.slice(4).split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
+								if (!parts.length) continue;
+								let dest = BT2.USER_ROOT + '/' + parts.join('/');
+								const content = await BT2.zipExtract(data, e);
+								if (FS.analyzePath(dest).exists) {
+									const cur = FS.readFile(dest);
+									if (cur.length === content.length && cur.every((v, i) => v === content[i])) continue; // the same file
+									if (cur.length === 0) { FS.writeFile(dest, content); restored++; continue; } // an empty demo placeholder
+									dest = BT2.uniquePath(dest);
+								}
+								BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
+								FS.writeFile(dest, content);
+								restored++;
+							}
+							n += restored;
+							BT2.toast('Sikkerhetskopi: ' + restored + ' filer lagt tilbake i BT2');
+							continue;
+						}
+						// a zip file: unpack it, with its folders, into a folder with the zip's name
+						const base = BT2.uniquePath(dir + '/' + BT2.cleanName(f.name.replace(/\.zip$/i, '')));
+						for (const e of entries) {
+							if (e.dir || /(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)(\/|$)/i.test(e.name)) continue;
+							const parts = e.name.split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
+							if (!parts.length) continue;
+							const dest = BT2.uniquePath(base + '/' + parts.join('/'));
+							BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
+							FS.writeFile(dest, await BT2.zipExtract(data, e));
+							n++;
+						}
+						zips++;
+					} else {
+						FS.writeFile(BT2.uniquePath(dir + '/' + BT2.cleanName(f.name)), data);
+						n++;
+					}
+				} catch (e) { console.error('import', f.name, e); BT2.toast('Kunne ikke importere ' + f.name); }
+			}
+			Module._webImportDone();
+			BT2.syncFiles();
+			BT2.toast((n === 1 ? 'Importerte 1 fil' : 'Importerte ' + n + ' filer') + (zips ? ' (pakket ut zip)' : '') +
+				(dir === BT2.USER_ROOT && Module.bt2FS.cwd() !== dir ? ' til BT2-mappa' : ''));
+			return n;
+		},
 		doImport() {
 			const input = $('importInput');
 			input.value = '';
-			input.onchange = async () => {
+			input.onchange = () => {
 				const files = Array.from(input.files || []);
-				if (files.length === 0) return;
-				const FS = Module.bt2FS;
-				const dir = FS.cwd();
-				let n = 0;
-				for (const f of files) {
-					try {
-						const name = f.name.replace(/[\/\\]/g, '_');
-						FS.writeFile(dir + '/' + name, new Uint8Array(await f.arrayBuffer()));
-						n++;
-					} catch (e) { console.error(e); }
-				}
-				Module._webImportDone();
-				BT2.syncFiles();
-				BT2.toast(n === 1 ? 'Importerte 1 fil' : 'Importerte ' + n + ' filer');
+				if (files.length) BT2.importFiles(files);
 			};
 			input.click();
+		},
+
+		// ---------- zip files (import, Modland list)
+		zipEntries(buf) {
+			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+			let eocd = -1;
+			for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--)
+				if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+			if (eocd < 0) throw new Error('not a zip file');
+			const count = dv.getUint16(eocd + 10, true);
+			let p = dv.getUint32(eocd + 16, true);
+			const out = [];
+			for (let i = 0; i < count && dv.getUint32(p, true) === 0x02014b50; i++) {
+				const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true);
+				const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+				const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+				const off = dv.getUint32(p + 42, true);
+				const nameBytes = buf.subarray(p + 46, p + 46 + nlen);
+				let name;
+				try { name = new TextDecoder('utf-8', { fatal: true }).decode(nameBytes); }
+				catch (err) { name = new TextDecoder('windows-1252').decode(nameBytes); } // old zip programs
+				out.push({ name, method, csize, usize, off, dir: name.endsWith('/') });
+				p += 46 + nlen + xlen + clen;
+			}
+			return out;
+		},
+		async zipExtract(buf, e) {
+			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+			const start = e.off + 30 + dv.getUint16(e.off + 26, true) + dv.getUint16(e.off + 28, true);
+			const raw = buf.subarray(start, start + e.csize);
+			if (e.method === 0) return raw.slice();
+			if (e.method !== 8) throw new Error('zip method ' + e.method);
+			const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+			return new Uint8Array(await new Response(stream).arrayBuffer());
+		},
+
+		// ---------- downloads with a progress box
+		netShow(text, p) {
+			$('net').classList.remove('hidden');
+			$('netText').textContent = text;
+			$('netProgress').style.width = (p === null || p === undefined) ? '0' : Math.round(p * 100) + '%';
+		},
+		netHide() { $('net').classList.add('hidden'); },
+		async download(url, label) {
+			try {
+				BT2.netShow(label + ' …', 0);
+				const r = await fetch(url, { mode: 'cors', cache: 'no-cache' });
+				if (!r.ok) throw new Error('HTTP ' + r.status);
+				const total = +(r.headers.get('Content-Length') || 0);
+				if (!r.body || !total) {
+					const b = new Uint8Array(await r.arrayBuffer());
+					BT2.netHide();
+					return b;
+				}
+				const reader = r.body.getReader();
+				const out = new Uint8Array(total);
+				let got = 0, chunks = [];
+				for (;;) {
+					const { done, value } = await reader.read();
+					if (done) break;
+					if (got + value.length <= total) out.set(value, got); else chunks.push(value);
+					got += value.length;
+					BT2.netShow(label + ' … ' + Math.round(100 * got / total) + ' %', got / total);
+				}
+				BT2.netHide();
+				if (got === total && !chunks.length) return out;
+				return new Uint8Array(await new Blob([out.subarray(0, Math.min(got, total)), ...chunks]).arrayBuffer());
+			} catch (e) {
+				console.warn('download', url, e);
+				BT2.netHide();
+				BT2.toast(navigator.onLine === false ? 'Ingen nett – prøv igjen når du er på nett' : 'Kunne ikke hente filen (' + e.message + ')');
+				return null;
+			}
 		},
 
 		doExport() {
@@ -451,22 +664,88 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			let data = null;
 			try { if (path && FS.analyzePath(path).exists) data = FS.readFile(path); } catch (e) {}
 			if (!data) { BT2.toast('Lagre filen først (Save), så Exp.'); return; }
-			const file = new File([data], name, { type: 'application/octet-stream' });
+			BT2.saveOrShare(new File([data], name, { type: 'application/octet-stream' }));
+		},
+		saveOrShare(file) { // iPad/iPhone: the share sheet ("Save to Files"), elsewhere a download
 			if (navigator.canShare && navigator.canShare({ files: [file] })) {
-				navigator.share({ files: [file], title: name }).catch(() => {});
+				navigator.share({ files: [file], title: file.name }).catch(() => {});
 			} else {
 				const a = document.createElement('a');
 				a.href = URL.createObjectURL(file);
-				a.download = name;
+				a.download = file.name;
 				document.body.appendChild(a);
 				a.click();
-				setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+				setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
 			}
 		},
 
+		// ---------- backup: all of the user's files (the BT2 folder) in one zip file
+		crcTable: null,
+		crc32(data) {
+			if (!BT2.crcTable) {
+				BT2.crcTable = new Uint32Array(256);
+				for (let n = 0; n < 256; n++) {
+					let c = n;
+					for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+					BT2.crcTable[n] = c >>> 0;
+				}
+			}
+			let c = 0xFFFFFFFF;
+			for (let i = 0; i < data.length; i++) c = BT2.crcTable[(c ^ data[i]) & 0xFF] ^ (c >>> 8);
+			return (c ^ 0xFFFFFFFF) >>> 0;
+		},
+		zipCreate(files) { // [{name, data}] -> zip (stored, UTF-8 names)
+			const enc = new TextEncoder(), parts = [], central = [];
+			let offset = 0;
+			const now = new Date();
+			const dosTime = (now.getHours() << 11) | (now.getMinutes() << 5) | (now.getSeconds() >> 1);
+			const dosDate = ((now.getFullYear() - 1980) << 9) | ((now.getMonth() + 1) << 5) | now.getDate();
+			for (const f of files) {
+				const name = enc.encode(f.name), crc = BT2.crc32(f.data), size = f.data.length;
+				const h = new DataView(new ArrayBuffer(30));
+				h.setUint32(0, 0x04034b50, true); h.setUint16(4, 20, true); h.setUint16(6, 0x800, true); h.setUint16(8, 0, true);
+				h.setUint16(10, dosTime, true); h.setUint16(12, dosDate, true); h.setUint32(14, crc, true);
+				h.setUint32(18, size, true); h.setUint32(22, size, true); h.setUint16(26, name.length, true); h.setUint16(28, 0, true);
+				parts.push(new Uint8Array(h.buffer), name, f.data);
+				const c = new DataView(new ArrayBuffer(46));
+				c.setUint32(0, 0x02014b50, true); c.setUint16(4, 20, true); c.setUint16(6, 20, true); c.setUint16(8, 0x800, true);
+				c.setUint16(10, 0, true); c.setUint16(12, dosTime, true); c.setUint16(14, dosDate, true); c.setUint32(16, crc, true);
+				c.setUint32(20, size, true); c.setUint32(24, size, true); c.setUint16(28, name.length, true);
+				c.setUint32(42, offset, true);
+				central.push(new Uint8Array(c.buffer), name);
+				offset += 30 + name.length + size;
+			}
+			const cdSize = central.reduce((a, x) => a + x.length, 0);
+			const e = new DataView(new ArrayBuffer(22));
+			e.setUint32(0, 0x06054b50, true); e.setUint16(8, files.length, true); e.setUint16(10, files.length, true);
+			e.setUint32(12, cdSize, true); e.setUint32(16, offset, true);
+			return new Blob([...parts, ...central, new Uint8Array(e.buffer)], { type: 'application/zip' });
+		},
+		backup() {
+			const FS = Module.bt2FS, files = [];
+			const walk = (dir, rel) => {
+				for (const n of FS.readdir(dir)) {
+					if (n === '.' || n === '..') continue;
+					const p = dir + '/' + n, st = FS.stat(p);
+					if (FS.isDir(st.mode)) walk(p, rel + n + '/');
+					else if (st.size > 0) files.push({ name: 'BT2/' + rel + n, data: FS.readFile(p) }); // (skips not-yet-downloaded demos)
+				}
+			};
+			try {
+				walk(BT2.USER_ROOT, '');
+				for (const cfg of ['/home/web_user/FT2.CFG', '/home/web_user/.config/FT2 clone/FT2.CFG'])
+					if (FS.analyzePath(cfg).exists) { files.push({ name: 'Innstillinger/FT2.CFG', data: FS.readFile(cfg) }); break; }
+			} catch (e) { console.error('backup', e); }
+			const d = new Date(), pad = (x) => String(x).padStart(2, '0');
+			const name = 'Bernttracker-sikkerhetskopi-' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '.zip';
+			BT2.saveOrShare(new File([BT2.zipCreate(files)], name, { type: 'application/zip' }));
+			BT2.toast(files.length + ' filer i sikkerhetskopien');
+		},
+
 		// called every frame from the program: where the FT2 screen is (for the Imp./Exp. buttons)
-		frame(x, y, w, h, diskOpShown) {
+		frame(x, y, w, h, diskOpShown, screenH) {
 			BT2.rect.x = x; BT2.rect.y = y; BT2.rect.w = w; BT2.rect.h = h;
+			BT2.screenH = screenH || SCREEN_H; // the FT2 screen gets taller when there is room (more pattern rows)
 			BT2.diskOpShown = !!diskOpShown;
 			BT2.checkCanvasShape();
 		},
@@ -489,46 +768,327 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		hitButton(clientX, clientY, bx, by, bw, bh) {
 			const r = BT2.rect;
 			const fx = (clientX - r.x) * SCREEN_W / r.w;
-			const fy = (clientY - r.y) * SCREEN_H / r.h;
+			const fy = (clientY - r.y) * (BT2.screenH || SCREEN_H) / r.h;
 			return fx >= bx && fx < bx + bw && fy >= by && fy < by + bh;
 		},
 
 		// Demo Tracks: copied into the user's own folders the first time (and when new ones are added)
+		// Demo Tracks: each song shows up once as a file in «Demo Tracks»; it is downloaded the first time it
+		// is opened (so a big library costs nothing until used). Songs the user deleted don't come back.
+		DEMO_ROOT: '/home/web_user/BT2/Demo Tracks',
+		DEMO_SEEN: '/home/web_user/BT2/.demo-seen.json',
+		demoIndex: null,
 		async installDemos() {
 			try {
 				const FS = Module.bt2FS;
 				const res = await fetch('demo/index.json', { cache: 'no-cache' });
 				if (!res.ok) return;
 				const list = await res.json();
-				const base = '/home/web_user/BT2/Demo Tracks';
+				BT2.demoIndex = new Map(list.files.map((f) => [f.path, f.size]));
+				let seen = [];
+				try { seen = JSON.parse(new TextDecoder().decode(FS.readFile(BT2.DEMO_SEEN))); } catch (e) {}
+				const seenSet = new Set(seen);
 				let added = 0;
 				for (const f of list.files) {
-					const dest = base + '/' + f.path;
-					if (FS.analyzePath(dest).exists) continue;
-					const parts = dest.split('/');
-					for (let i = 2; i < parts.length; i++) {
-						const dir = parts.slice(0, i).join('/');
-						if (dir && !FS.analyzePath(dir).exists) FS.mkdir(dir);
-					}
-					const r = await fetch('demo/' + f.path.split('/').map(encodeURIComponent).join('/'));
-					if (!r.ok) continue;
-					FS.writeFile(dest, new Uint8Array(await r.arrayBuffer()));
+					if (seenSet.has(f.path)) continue;
+					seenSet.add(f.path);
+					const dest = BT2.DEMO_ROOT + '/' + f.path;
+					if (FS.analyzePath(dest).exists) continue; // already there (also from earlier versions)
+					BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
+					FS.writeFile(dest, new Uint8Array(0)); // downloaded when opened
 					added++;
 				}
+				if (seenSet.size !== seen.length) FS.writeFile(BT2.DEMO_SEEN, JSON.stringify([...seenSet]));
 				if (added > 0) {
 					Module._webImportDone();
 					BT2.syncFiles();
-					BT2.toast(added + ' demo-låter lagt i «Demo Tracks»');
+					BT2.toast(added + (added === 1 ? ' ny demo-låt' : ' nye demo-låter') + ' i «Demo Tracks»');
 				}
 			} catch (e) { console.warn('Demo Tracks', e); }
 		},
 
+		// called by the program before it opens a file (Disk Op): fetch library songs on first use
+		absPath(p) {
+			const FS = Module.bt2FS;
+			if (p[0] !== '/') p = FS.cwd() + '/' + p;
+			const out = [];
+			for (const part of p.split('/')) {
+				if (!part || part === '.') continue;
+				if (part === '..') out.pop(); else out.push(part);
+			}
+			return '/' + out.join('/');
+		},
+		async prepareFile(path) {
+			const FS = Module.bt2FS;
+			const abs = BT2.absPath(path);
+			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) BT2.fsReaddirHook(abs.slice(0, abs.lastIndexOf('/')));
+			let st = null;
+			try { st = FS.stat(abs); } catch (e) { return true; } // let the program report it
+			if (st.size > 0) return true;
+
+			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) return BT2.modlandFetch(abs);
+
+			if (abs.startsWith(BT2.DEMO_ROOT + '/')) {
+				const rel = abs.slice(BT2.DEMO_ROOT.length + 1);
+				if (!BT2.demoIndex) { try { const r = await fetch('demo/index.json', { cache: 'no-cache' }); BT2.demoIndex = new Map((await r.json()).files.map((f) => [f.path, f.size])); } catch (e) {} }
+				if (!BT2.demoIndex || !BT2.demoIndex.has(rel)) return true;
+				const data = await BT2.download('demo/' + rel.split('/').map(encodeURIComponent).join('/'), 'Henter ' + rel.split('/').pop());
+				if (!data) return false;
+				FS.writeFile(abs, data);
+				BT2.syncFiles();
+				return true;
+			}
+			return true;
+		},
+
+		// ---------- Modland (https://modland.com, the "Fasttracker 2" folder) as folders in Disk Op
+		MODLAND_ROOT: '/Modland',
+		MODLAND_SEARCH: '/Modland/~Search results',
+		MODLAND_URL: 'https://modland.com/pub/modules/Fasttracker%202/',
+		modland: { tree: null, populated: new Set(), searchMap: new Map() },
+		async modlandLoad() {
+			if (BT2.modland.tree) return true;
+			let text = null, saved = 0;
+			try {
+				const c = await caches.open('bt2-modland');
+				const r = await c.match('ft2-index-v1');
+				if (r) { text = await r.text(); saved = +(r.headers.get('X-Saved') || 0); }
+			} catch (e) {}
+			if (!text) {
+				text = await BT2.modlandDownloadList();
+				if (!text) return false;
+			} else if (Date.now() - saved > 30 * 864e5 && navigator.onLine !== false) {
+				BT2.modlandDownloadList(true).catch(() => {}); // refresh in the background (used next time)
+			}
+			const root = { d: new Map(), f: new Map() };
+			for (const line of text.split('\n')) {
+				const t = line.indexOf('\t');
+				if (t <= 0) continue;
+				const parts = line.slice(t + 1).split('/');
+				let node = root;
+				for (let i = 0; i < parts.length - 1; i++) {
+					let next = node.d.get(parts[i]);
+					if (!next) { next = { d: new Map(), f: new Map() }; node.d.set(parts[i], next); }
+					node = next;
+				}
+				node.f.set(parts[parts.length - 1], +line.slice(0, t));
+			}
+			BT2.modland.tree = root;
+			BT2.modland.lines = text;
+			return true;
+		},
+		async modlandDownloadList(quiet) {
+			const buf = quiet ? await (await fetch('https://modland.com/allmods.zip', { cache: 'no-cache' })).arrayBuffer().then((b) => new Uint8Array(b))
+				: await BT2.download('https://modland.com/allmods.zip', 'Henter Modland-listen (bare første gang)');
+			if (!buf) return null;
+			const entries = BT2.zipEntries(buf);
+			const e = entries.find((x) => /allmods\.txt$/i.test(x.name)) || entries[0];
+			const all = new TextDecoder('utf-8').decode(await BT2.zipExtract(buf, e));
+			const out = [];
+			for (const line of all.split('\n')) {
+				const i = line.indexOf('\tFasttracker 2/');
+				if (i > 0) out.push(line.slice(0, i) + '\t' + line.slice(i + 15).replace(/\r$/, ''));
+			}
+			const text = out.join('\n');
+			try {
+				const c = await caches.open('bt2-modland');
+				await c.put('ft2-index-v1', new Response(text, { headers: { 'Content-Type': 'text/plain', 'X-Saved': String(Date.now()) } }));
+			} catch (e2) {}
+			return text;
+		},
+		modlandNode(abs) { // tree node for a folder under /Modland
+			if (!BT2.modland.tree) return null;
+			let node = BT2.modland.tree;
+			if (abs === BT2.MODLAND_ROOT) return node;
+			for (const part of abs.slice(BT2.MODLAND_ROOT.length + 1).split('/')) {
+				node = node.d.get(part);
+				if (!node) return null;
+			}
+			return node;
+		},
+		fsReaddirHook(abs) { // fills /Modland folders the first time they are listed
+			if (abs !== BT2.MODLAND_ROOT && !abs.startsWith(BT2.MODLAND_ROOT + '/')) return;
+			if (BT2.modland.populated.has(abs)) return;
+			const node = BT2.modlandNode(abs);
+			if (!node) return;
+			BT2.modland.populated.add(abs);
+			const FS = Module.bt2FS;
+			for (const name of node.d.keys()) { try { FS.mkdir(abs + '/' + name); } catch (e) {} }
+			for (const name of node.f.keys()) { try { FS.writeFile(abs + '/' + name, new Uint8Array(0)); } catch (e) {} }
+		},
+		async modlandPrepare() {
+			if (!(await BT2.modlandLoad())) return false;
+			const FS = Module.bt2FS;
+			if (!FS.analyzePath(BT2.MODLAND_ROOT).exists) FS.mkdir(BT2.MODLAND_ROOT);
+			return true;
+		},
+		async modlandSearch(query) {
+			if (!(await BT2.modlandPrepare())) return -1;
+			const FS = Module.bt2FS;
+			const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+			const hits = [];
+			for (const line of BT2.modland.lines.split('\n')) {
+				const t = line.indexOf('\t');
+				const path = line.slice(t + 1), low = path.toLowerCase();
+				if (words.every((w) => low.includes(w))) { hits.push(path); if (hits.length >= 500) break; }
+			}
+			// the results folder is rebuilt for each search (it is not stored anywhere)
+			const dir = BT2.MODLAND_SEARCH;
+			if (FS.analyzePath(dir).exists) {
+				for (const n of FS.readdir(dir)) if (n !== '.' && n !== '..') { try { FS.unlink(dir + '/' + n); } catch (e) {} }
+			} else {
+				FS.mkdir(dir);
+			}
+			BT2.modland.searchMap = new Map();
+			for (const path of hits) {
+				let name = BT2.cleanName(path.split('/').join(' - '));
+				while (BT2.modland.searchMap.has(name)) name = '_' + name;
+				BT2.modland.searchMap.set(name, path);
+				FS.writeFile(dir + '/' + name, new Uint8Array(0));
+			}
+			return hits.length;
+		},
+		async modlandFetch(abs) {
+			const FS = Module.bt2FS;
+			const path = abs.startsWith(BT2.MODLAND_SEARCH + '/') ? BT2.modland.searchMap.get(abs.slice(BT2.MODLAND_SEARCH.length + 1))
+				: abs.slice(BT2.MODLAND_ROOT.length + 1);
+			if (!path) return true;
+			const own = BT2.USER_ROOT + '/Modland/' + path; // the user's own copy (kept, works without internet)
+			try {
+				if (FS.stat(own).size > 0) { FS.writeFile(abs, FS.readFile(own)); return true; }
+			} catch (e) {}
+			const data = await BT2.download(BT2.MODLAND_URL + path.split('/').map(encodeURIComponent).join('/'),
+				'Henter «' + path.split('/').pop() + '» fra Modland');
+			if (!data) return false;
+			BT2.mkdirs(own.slice(0, own.lastIndexOf('/')));
+			FS.writeFile(own, data);
+			FS.writeFile(abs, data);
+			BT2.syncFiles();
+			BT2.toast('Lagret i BT2/Modland/' + path);
+			return true;
+		},
+
 		loadStage(t) { $('loadStatus').textContent = t; },
 
+		// the stored files could not be read: nothing is saved in this session, so they can't be harmed
+		storageFailed(msg) {
+			BT2.storageProblem = true;
+			$('storageWarning').classList.remove('hidden');
+		},
+
+		// ---------- the app on the device (offline start) and updates
+		// Only the program's own files are stored here (Cache Storage). The user's songs, samples,
+		// folders and settings are in IndexedDB and are never touched by this.
+		APP_META: 'bt2-meta',
+		APP_KEY: '__bt2/current-app',
+		appSupported() { return window.isSecureContext && 'caches' in window && !!navigator.serviceWorker; },
+		async appCurrent() {
+			const m = await caches.open(BT2.APP_META);
+			const r = await m.match(BT2.APP_KEY);
+			return r ? r.json() : null;
+		},
+		async appRemote() {
+			const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+			if (!r.ok) throw new Error('version.json ' + r.status);
+			return r.json();
+		},
+		async appInstall(v, onProgress) {
+			const name = 'bt2-app-' + v.build;
+			const base = new URL('./', location.href);
+			await caches.delete(name); // leftovers from an interrupted attempt
+			const cache = await caches.open(name);
+			const total = v.files.reduce((a, f) => a + f.size, 0) || 1;
+			let done = 0;
+			for (const f of v.files) {
+				const url = new URL(f.path, base);
+				// "?v=" skips old copies in the network's caches; checked against size and SHA-256
+				const r = await fetch(url.href + '?v=' + encodeURIComponent(v.build), { cache: 'reload' });
+				if (!r.ok) throw new Error(f.path + ': ' + r.status);
+				const buf = await r.arrayBuffer();
+				if (buf.byteLength !== f.size) throw new Error(f.path + ': size');
+				const hash = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', buf)))
+					.map((b) => b.toString(16).padStart(2, '0')).join('');
+				if (hash !== f.sha256) throw new Error(f.path + ': checksum');
+				const type = r.headers.get('Content-Type') || (f.path.endsWith('.wasm') ? 'application/wasm' : 'application/octet-stream');
+				await cache.put(new Request(url.href), new Response(buf, { headers: { 'Content-Type': type } }));
+				done += f.size;
+				if (onProgress) onProgress(done / total);
+			}
+			const meta = await caches.open(BT2.APP_META);
+			await meta.put(BT2.APP_KEY, new Response(JSON.stringify({ cache: name, build: v.build, version: v.version, date: v.date }),
+				{ headers: { 'Content-Type': 'application/json' } }));
+			for (const k of await caches.keys())  // older versions of the PROGRAM only
+				if (k.startsWith('bt2-app-') && k !== name) await caches.delete(k);
+			try { navigator.serviceWorker.controller && navigator.serviceWorker.controller.postMessage({ type: 'bt2-app-changed' }); } catch (e) {}
+		},
+		appSetStatus(t) { $('appStatus').textContent = t; },
+		appShowProgress(p) {
+			$('appBar').classList.toggle('hidden', p === null);
+			if (p !== null) $('appProgress').style.width = Math.round(p * 100) + '%';
+		},
+		async appCheck() {
+			try {
+				const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches ||
+					matchMedia('(display-mode: fullscreen)').matches;
+				if (BT2.isApple() && navigator.maxTouchPoints > 0 && !standalone) $('homeHint').classList.remove('hidden');
+			} catch (e) {}
+
+			if (!BT2.appSupported()) { BT2.appSetStatus('Denne nettleseren kan ikke lagre appen på enheten.'); return; }
+			let cur = null, remote = null;
+			try { cur = await BT2.appCurrent(); } catch (e) {}
+			try { remote = await BT2.appRemote(); } catch (e) {}
+
+			if (!cur) {
+				if (!remote) { BT2.appSetStatus('Appen er ikke lagret på enheten ennå (ingen nett nå).'); return; }
+				BT2.appSetStatus('Lagrer appen på denne enheten …');
+				try {
+					await BT2.appInstall(remote, (p) => { BT2.appShowProgress(p); BT2.appSetStatus('Lagrer appen på denne enheten … ' + Math.round(p * 100) + ' %'); });
+					BT2.appSetStatus('✓ Lagret på denne enheten – starter også uten nett.');
+				} catch (e) {
+					console.warn('app install', e);
+					BT2.appSetStatus('Kunne ikke lagre appen på enheten nå. Prøver igjen neste gang.');
+				}
+				BT2.appShowProgress(null);
+				return;
+			}
+
+			if (!remote) { BT2.appSetStatus('✓ Lagret på denne enheten (ingen nett nå – bruker den lagrede versjonen).'); return; }
+			if (remote.build === cur.build) { BT2.appSetStatus('✓ Lagret på denne enheten · du har nyeste versjon.'); return; }
+
+			BT2.appSetStatus('✓ Lagret på denne enheten (versjon ' + cur.version + ').');
+			$('updateText').textContent = 'Ny versjon ' + remote.version + ' (' + remote.date + ') er klar på nettet.';
+			$('updateBox').classList.remove('hidden');
+			BT2.appRemoteInfo = remote;
+		},
+		async appUpdate() {
+			const v = BT2.appRemoteInfo;
+			if (!v) return;
+			$('updateBox').classList.add('hidden');
+			BT2.appSetStatus('Laster ned versjon ' + v.version + ' …');
+			try {
+				await BT2.appInstall(v, (p) => { BT2.appShowProgress(p); BT2.appSetStatus('Laster ned versjon ' + v.version + ' … ' + Math.round(p * 100) + ' %'); });
+				BT2.appShowProgress(null);
+				if (BT2.started) {
+					BT2.appSetStatus('✓ Versjon ' + v.version + ' er lagret og brukes neste gang du åpner appen.');
+					BT2.toast('Ny versjon lagret – brukes neste gang du åpner appen');
+				} else {
+					BT2.appSetStatus('✓ Oppdatert. Starter på nytt …');
+					setTimeout(() => location.reload(), 600);
+				}
+			} catch (e) {
+				console.warn('app update', e);
+				BT2.appShowProgress(null);
+				BT2.appSetStatus('Oppdateringen er ikke helt klar på nettet ennå. Prøv igjen om noen minutter.');
+				$('updateBox').classList.remove('hidden');
+			}
+		},
+
 		appStarted() {
+			try { if (!BT2.isApple() && !(navigator.maxTouchPoints > 0)) $('pcHint').style.display = ''; } catch (e) {}
 			setTimeout(BT2.installDemos, 1500);
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');
+			BT2.starfield.kick();
 			BT2.showAudioMode();
 		},
 	};
@@ -540,13 +1100,235 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		else if (BT2.hitButton(e.clientX, e.clientY, 134, 57, 31, 22)) BT2.doExport();
 	}, { capture: true });
 
+	// ---------- the FT2 about-screen starfield behind the logo (only while the loading/start screen is shown)
+	// Same stars, movement and colours as the About screen in FT2 (ft2_about.c), drawn in FT2-sized pixels.
+	const starfield = (() => {
+		const cv = document.createElement('canvas');
+		cv.className = 'stars';
+		cv.setAttribute('aria-hidden', 'true');
+		const g = cv.getContext('2d', { alpha: false });
+		const N = 1500, W = 632, BLACK = 0xFF000000;
+		const px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
+		for (let i = 0; i < N; i++) {
+			px[i] = Math.floor(Math.random() * 32768) - 16384;
+			py[i] = Math.floor(Math.random() * 32768) - 16384;
+			pz[i] = Math.floor(Math.random() * 32768) - 16384;
+		}
+		const still = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+		let rotX = 0, rotY = 0, rotZ = 0, img = null, buf = null, H = 0, running = false, last = 0;
+		const host = () => ['start', 'loading'].map($).find((el) => el && !el.classList.contains('hidden'));
+		const draw = () => {
+			buf.fill(BLACK);
+			const T = 2 * Math.PI;
+			const xs = Math.sin(rotX * T), xc = Math.cos(rotX * T);
+			const ys = Math.sin(rotY * T), yc = Math.cos(rotY * T);
+			const zs = Math.sin(rotZ * T), zc = Math.cos(rotZ * T);
+			const mxx = xc * zc + zs * xs * ys, myx = xs * yc, mzx = zc * xs * ys - xc * zs;
+			const mxy = zs * xc * ys - xs * zc, myy = xc * yc, mzy = xs * zs + zc * xc * ys;
+			const mxz = yc * zs, myz = -ys, mzz = yc * zc;
+			const blend = (p, c) => { if (buf[p] === BLACK) buf[p] = c; };
+			for (let i = 0; i < N; i++) {
+				const z = mxz * px[i] + myz * py[i] + mzz * pz[i] + 16384;
+				if (z <= 0) continue;
+				const y = Math.trunc((mxy * px[i] + myy * py[i] + mzy * pz[i]) * 400 / z) + (H >> 1);
+				if (y < 0 || y >= H) continue;
+				const x = Math.trunc((mxx * px[i] + myx * py[i] + mzx * pz[i]) * 400 / z) + (W >> 1);
+				if (x < 0 || x >= W) continue;
+				const p = y * W + x;
+				if (buf[p] !== BLACK) continue;
+				const v = 255 - Math.min(255, z / 128);
+				const r = Math.max(0, v - 96), gr = Math.max(0, v - 48), b = Math.min(255, v + 64);
+				buf[p] = BLACK | (b << 16) | (gr << 8) | r;
+				// a little shine around the star (31 %, like FT2)
+				const sc = BLACK | ((b * 0.31) << 16) | ((gr * 0.31) << 8) | (r * 0.31);
+				if (x > 0) blend(p - 1, sc);
+				if (x < W - 1) blend(p + 1, sc);
+				if (y > 0) blend(p - W, sc);
+				if (y < H - 1) blend(p + W, sc);
+			}
+			g.putImageData(img, 0, 0);
+		};
+		const frame = (t) => {
+			const h = host();
+			if (!h || document.hidden) { running = false; return; }
+			if (cv.parentNode !== h) h.insertBefore(cv, h.firstChild);
+			const wantH = Math.max(120, Math.min(1600, Math.round(W * innerHeight / Math.max(1, innerWidth))));
+			if (wantH !== H || !img) {
+				H = wantH; cv.width = W; cv.height = H;
+				img = g.createImageData(W, H); buf = new Uint32Array(img.data.buffer);
+				last = 0;
+			}
+			if (last && t - last < 15) { requestAnimationFrame(frame); return; } // at most ~60 times a second
+			// FT2 moves the stars a fixed step per 60 Hz frame
+			const steps = still ? 0 : (last ? Math.min(6, (t - last) / (1000 / 60)) : 1);
+			last = t;
+			for (let i = 0; i < N; i++) {
+				pz[i] += 3 * steps;
+				if (pz[i] > 16384) pz[i] -= 32768;
+			}
+			rotX -= 0.0003 * steps; rotY -= 0.0002 * steps; rotZ += 0.0001 * steps;
+			draw();
+			if (still) { running = false; return; }
+			requestAnimationFrame(frame);
+		};
+		return {
+			kick() { if (!running) { running = true; last = 0; requestAnimationFrame(frame); } },
+		};
+	})();
+	BT2.starfield = starfield;
+	starfield.kick();
+	window.addEventListener('resize', () => starfield.kick());
+
+	// ---------- hardware/Bluetooth keyboard
+	// Runs before the program sees the key. Keeps the modifier keys in step with the browser, makes
+	// Caps Lock (key-off) work on every press on iPad/Mac, and stops the browser from acting on keys
+	// that FT2 uses (Alt opens browser menus on Windows, Space/Enter press focused buttons, ...).
+	// AltGr on Windows keyboards also reports a (fake) left Ctrl; remember while it is held
+	let altGrHeld = false;
+	const modFlags = (e) => (e.ctrlKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0) |
+		((altGrHeld || (e.getModifierState && e.getModifierState('AltGraph'))) ? 16 : 0);
+	const overlayOpen = () => !$('start').classList.contains('hidden') || !$('loading').classList.contains('hidden');
+	const ready = () => typeof Module._webSyncModifiers === 'function';
+	let capsDownState = null;
+	BT2.keyLog = [];
+	const logKey = (e) => {
+		BT2.keyLog.push((e.type === 'keydown' ? '↓ ' : '↑ ') + (e.code || '?') + '  «' + e.key + '»  ' + e.keyCode +
+			(e.repeat ? ' (gjentatt)' : ''));
+		if (BT2.keyLog.length > 6) BT2.keyLog.shift();
+		diagUpdate();
+	};
+	const onKey = (e) => {
+		if (!e.isTrusted) return;
+		if (!$('diag').classList.contains('hidden')) {
+			// sound test is open: show the key, don't let the program react to it
+			logKey(e);
+			if (e.code !== 'Tab') { e.preventDefault(); e.stopImmediatePropagation(); }
+			return;
+		}
+		if (!ready()) return;
+		if (e.code === 'AltRight')
+			altGrHeld = e.type === 'keydown' && !BT2.isApple() &&
+				(e.ctrlKey || e.key === 'AltGraph' || (e.getModifierState && e.getModifierState('AltGraph')));
+		Module._webSyncModifiers(modFlags(e));
+
+		if (e.code === 'CapsLock') {
+			// iPad/Mac report Caps Lock "on" as key down and "off" as key up, so FT2 would only get every
+			// other press. If the lock state changed between down and up, the up was a press of its own.
+			const st = e.getModifierState ? e.getModifierState('CapsLock') : null;
+			if (e.type === 'keydown') capsDownState = st;
+			else {
+				if (capsDownState !== null && st !== capsDownState) Module._webTapKey(57); // SDL_SCANCODE_CAPSLOCK
+				capsDownState = null;
+			}
+		}
+
+		if (overlayOpen() || e.metaKey) return; // overlay buttons, and Cmd/Win shortcuts of the system/browser
+		const editing = Module._webIsEditingText() !== 0;
+		if (e.type === 'keyup') {
+			if (e.key === 'Alt' || e.key === 'AltGraph' || e.key === 'ContextMenu' || e.key === 'F10') e.preventDefault();
+			return;
+		}
+		if (!editing) e.preventDefault(); // nothing for the browser to do with the key
+		else if (e.altKey && !e.ctrlKey && !BT2.isApple()) e.preventDefault(); // Alt+letter = browser menus on Windows
+	};
+	window.addEventListener('keydown', onKey, true);
+	window.addEventListener('keyup', onKey, true);
+	// modifier keys held while clicking/tapping (Shift/Ctrl/Alt + click is used in FT2)
+	window.addEventListener('pointerdown', (e) => { if (e.isTrusted && ready() && e.pointerType === 'mouse') Module._webSyncModifiers(modFlags(e)); }, true);
+
+	// Alt+Enter in FT2: fullscreen (the whole page). In Chrome/Edge the keyboard is also "locked" then,
+	// so keys the browser normally keeps for itself (Ctrl+T, Ctrl+N, Ctrl+W, Alt+F4 ...) reach FT2.
+	BT2.toggleFullscreen = () => {
+		const d = document, el = d.documentElement;
+		try {
+			if (d.fullscreenElement || d.webkitFullscreenElement) {
+				if (navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock();
+				(d.exitFullscreen || d.webkitExitFullscreen).call(d);
+			} else if (el.requestFullscreen) {
+				el.requestFullscreen({ navigationUI: 'hide' }).then(() => {
+					if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock().catch(() => {});
+				}).catch(() => {});
+			} else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+		} catch (e) {}
+	};
+
+	// Ask before the page is closed/reloaded: when the song has unsaved changes, and on PC keyboards
+	// always (in a browser tab, FT2's Ctrl+F4 / Alt+F4 copy keys would close the tab/window).
+	const isDesktopKeyboard = () => !BT2.isApple() && !(navigator.maxTouchPoints > 0);
+	window.addEventListener('beforeunload', (e) => {
+		if (!BT2.started || typeof Module._webSongIsModified !== 'function') return;
+		if (Module._webSongIsModified() || isDesktopKeyboard()) {
+			BT2.syncFiles();
+			e.preventDefault();
+			e.returnValue = '';
+		}
+	});
+
+	// ---------- drag and drop (PC/Mac): files and folders are copied into the folder you are in
+	window.addEventListener('dragover', (e) => { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+	window.addEventListener('drop', async (e) => {
+		e.preventDefault();
+		if (!BT2.started || !e.dataTransfer) return;
+		const files = [];
+		const readEntry = (entry, prefix) => new Promise((resolve) => {
+			if (entry.isFile) {
+				entry.file((f) => { files.push({ file: f, rel: prefix + f.name }); resolve(); }, () => resolve());
+			} else if (entry.isDirectory) {
+				const reader = entry.createReader(), all = [];
+				const more = () => reader.readEntries(async (list) => {
+					if (!list.length) { for (const c of all) await readEntry(c, prefix + entry.name + '/'); resolve(); }
+					else { all.push(...list); more(); }
+				}, () => resolve());
+				more();
+			} else resolve();
+		});
+		const items = Array.from(e.dataTransfer.items || []);
+		const entries = items.map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+		if (entries.length) { for (const en of entries) await readEntry(en, ''); }
+		else for (const f of Array.from(e.dataTransfer.files || [])) files.push({ file: f, rel: f.name });
+		if (!files.length) return;
+
+		const FS = Module.bt2FS, dir = BT2.importDir();
+		const plain = [];
+		let n = 0;
+		for (const { file, rel } of files) {
+			if (!rel.includes('/')) { plain.push(file); continue; }
+			try { // a dropped folder keeps its folders
+				const parts = rel.split('/').map(BT2.cleanName);
+				const dest = BT2.uniquePath(dir + '/' + parts.join('/'));
+				BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
+				FS.writeFile(dest, new Uint8Array(await file.arrayBuffer()));
+				n++;
+			} catch (err) { console.error('drop', rel, err); }
+		}
+		if (plain.length) n += await BT2.importFiles(plain);
+		else { Module._webImportDone(); BT2.syncFiles(); BT2.toast('Kopierte ' + n + ' filer'); }
+
+		// one song/instrument/sample dropped: open it too (like FT2 does)
+		if (files.length === 1 && !/\.zip$/i.test(files[0].file.name)) {
+			const path = dir + '/' + BT2.cleanName(files[0].file.name);
+			const all = FS.readdir(dir).filter((x) => x.startsWith(BT2.cleanName(files[0].file.name).replace(/\.[^.]*$/, '')));
+			const newest = all.map((x) => dir + '/' + x).sort((a, b) => FS.stat(b).mtime - FS.stat(a).mtime)[0] || path;
+			Module.ccall('webLoadFile', null, ['string'], [newest]);
+		}
+	});
+
+	// give the keyboard back to the program after closing an overlay (a focused button would take Space/Enter)
+	BT2.focusCanvas = () => {
+		try { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); } catch (e) {}
+		$('canvas').focus();
+	};
+
 	// wake the program as soon as there is input (after the program's own handlers have seen the event)
 	['pointerdown', 'pointerup', 'keydown', 'keyup', 'touchstart', 'touchend'].forEach((ev) =>
 		window.addEventListener(ev, () => { if (BT2.wake) setTimeout(() => BT2.wake && BT2.wake(), 0); }, { capture: true, passive: true }));
 
 	// no pinch-zoom, no scrolling, no long-press menus
 	['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault()));
-	document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+	document.addEventListener('touchmove', (e) => {
+		if (e.target && e.target.closest && e.target.closest('#start, #diag')) return; // these may scroll
+		e.preventDefault();
+	}, { passive: false });
 
 	$('startButton').addEventListener('click', () => {
 		if (BT2.ctx) {
@@ -558,7 +1340,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		}
 		BT2.started = true;
 		$('start').classList.add('hidden');
-		$('canvas').focus();
+		BT2.focusCanvas();
 		setTimeout(BT2.showAudioMode, 500);
 	});
 
@@ -588,11 +1370,21 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			L.push('Ca. forsinkelse: ' + BT2.latencyMs() + ' ms');
 		}
 		L.push('Enhet:          ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 60));
+		L.push('');
+		L.push('Tastaturtest (trykk taster mens denne er åpen):');
+		if (BT2.keyLog && BT2.keyLog.length) BT2.keyLog.forEach((k) => L.push('  ' + k));
+		else L.push('  (ingen taster trykket ennå)');
 		$('diagText').textContent = L.join('\n');
 	};
 	setInterval(diagUpdate, 250);
+	$('versionLine').textContent = 'Versjon ' + BT2_VERSION + ' · ' + BT2_DATE;
+	$('backupButton').addEventListener('click', () => { if (Module.bt2FS) BT2.backup(); });
+	$('updateNow').addEventListener('click', () => BT2.appUpdate());
+	$('updateLater').addEventListener('click', () => $('updateBox').classList.add('hidden'));
+	BT2.appCheck();
+
 	$('diagButton').addEventListener('click', () => { if (BT2.ctx) BT2.ctx.resume().catch(() => {}); $('diag').classList.remove('hidden'); diagUpdate(); });
-	$('diagClose').addEventListener('click', () => $('diag').classList.add('hidden'));
+	$('diagClose').addEventListener('click', () => { $('diag').classList.add('hidden'); BT2.focusCanvas(); });
 	$('pipButton').addEventListener('click', () => {
 		const c = BT2.ctx;
 		if (!c) return;
@@ -623,8 +1415,14 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	if (window.visualViewport) window.visualViewport.addEventListener('resize', askResizeLater);
 	checkRotate();
 
-	// save files when the app goes to the background
-	document.addEventListener('visibilitychange', () => { if (document.hidden) BT2.syncFiles(); });
+	// save files when the app goes to the background; wake the sound up again when it comes back
+	BT2.visibleSince = performance.now();
+	document.addEventListener('visibilitychange', () => {
+		if (document.hidden) { BT2.syncFiles(); return; }
+		BT2.visibleSince = performance.now();
+		if (BT2.started && BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {});
+		BT2.starfield.kick();
+	});
 	window.addEventListener('pagehide', () => BT2.syncFiles());
 
 	// ask the browser to keep our files (not clear them when space is low)
@@ -640,7 +1438,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			if (m) $('progress').style.width = (100 * m[1] / m[2]) + '%';
 		},
 		monitorRunDependencies: () => {},
-		onAbort: (what) => { $('loadStatus').textContent = 'Feil: ' + what; $('loading').classList.remove('hidden'); },
+		onAbort: (what) => { $('loadStatus').textContent = 'Feil: ' + what; $('loading').classList.remove('hidden'); BT2.starfield.kick(); },
 	};
 
 	const load = (src, label) => {
@@ -655,20 +1453,47 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		typeof AudioWorkletNode !== 'undefined';
 	const forceSimple = /[?&]simple\b/.test(location.search); // build without the audio thread
 
-	if (!forceSimple && canUseWorklet()) {
-		load('bt2.js', 'programmet');
-	} else {
-		// the helper script may reload the page once to turn on isolation - give it a moment
-		const waiting = !forceSimple && window.isSecureContext && navigator.serviceWorker && !navigator.serviceWorker.controller;
-		setTimeout(() => load('bt2-compat.js', 'programmet'), waiting ? 2500 : 0);
-	}
+	let loadingStarted = false;
+	const startLoading = () => {
+		if (loadingStarted) return;
+		loadingStarted = true;
+		$('alreadyOpen').classList.add('hidden');
+		$('alreadyOpenButtons').classList.add('hidden');
+		$('loadStatus').classList.remove('hidden');
 
-	// if loading gets stuck, offer a way out
-	setTimeout(() => {
-		if ($('loading').classList.contains('hidden')) return;
-		$('retry').classList.remove('hidden');
-	}, 12000);
+		if (!forceSimple && canUseWorklet()) {
+			load('bt2.js', 'programmet');
+		} else {
+			// the helper script may reload the page once to turn on isolation - give it a moment
+			const waiting = !forceSimple && window.isSecureContext && navigator.serviceWorker && !navigator.serviceWorker.controller;
+			setTimeout(() => load('bt2-compat.js', 'programmet'), waiting ? 2500 : 0);
+		}
+
+		// if loading gets stuck, offer a way out
+		setTimeout(() => {
+			if ($('loading').classList.contains('hidden')) return;
+			$('retry').classList.remove('hidden');
+		}, 12000);
+	};
 	$('retry').addEventListener('click', () => location.reload());
+	$('alreadyOpenRetry').addEventListener('click', () => location.reload());
+	$('alreadyOpenAnyway').addEventListener('click', startLoading);
+
+	// Only one copy of the program at a time (two copies would each have their own view of the files)
+	if (navigator.locks && navigator.locks.request) {
+		navigator.locks.request('bt2-app', { ifAvailable: true }, (lock) => {
+			if (!lock) {
+				$('loadStatus').classList.add('hidden');
+				$('alreadyOpen').classList.remove('hidden');
+				$('alreadyOpenButtons').classList.remove('hidden');
+				return;
+			}
+			startLoading();
+			return new Promise(() => {}); // keep the lock as long as this page is open
+		}).catch(() => startLoading());
+	} else {
+		startLoading();
+	}
 })();
 </script>
 </body>

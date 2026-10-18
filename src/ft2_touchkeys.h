@@ -23,6 +23,6 @@ void tkFree(void);
 void tkSetRects(const SDL_Rect *windowRect, const SDL_Rect *pixelRect);
 
 void tkRender(SDL_Renderer *renderer); // called once per frame from flipFrame()
-bool tkHandleEvent(const SDL_Event *event); // true = event was used by the keyboard
+bool tkHandleEvent(SDL_Event *event); // true = event was used by the keyboard (may turn a click into a right click)
 void tkApplyModifiers(void); // ORs latched on-screen Shift/Ctrl/Alt into keyb.* (from readKeyModifiers)
 bool tkMouseIsOverKeyboard(void);

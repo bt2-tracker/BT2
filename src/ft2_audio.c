@@ -1008,6 +1008,14 @@ static void calcAudioLatencyVars(int32_t audioBufferSize, int32_t audioFreq)
 	audio.audLatencyPerfValFrac = (uint64_t)(dAudioLatencyTimeFrac * TICK_TIME_FRAC_SCALE);
 }
 
+#ifdef __EMSCRIPTEN__
+void webAudioSetLatencyFrames(int32_t frames) // BerntTracker (web): the sound engine changed, keep scopes/pattern in sync
+{
+	if (frames > 0 && audio.haveFreq > 0)
+		calcAudioLatencyVars(frames, audio.haveFreq);
+}
+#endif
+
 static void setLastWorkingAudioDevName(void)
 {
 	if (audio.lastWorkingAudioDeviceName != NULL)

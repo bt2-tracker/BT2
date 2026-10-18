@@ -19,6 +19,22 @@
 #include "ft2_audio.h"
 #include "ft2_wav_renderer.h"
 #include "ft2_structs.h"
+#include "ft2_unicode.h"
+
+// BerntTracker: Disk Op. names are cp850; on non-Windows systems the file system wants UTF-8 ("æøå")
+static FILE *fopenCp850(char *name, const char *mode)
+{
+#ifdef _WIN32
+	return fopen(name, mode);
+#else
+	char *nameU = cp850ToUtf8(name);
+	FILE *f = fopen((nameU != NULL) ? nameU : name, mode);
+	if (nameU != NULL)
+		free(nameU);
+
+	return f;
+#endif
+}
 
 #define UPDATE_VISUALS_AT_TICK 4
 #define TICKS_PER_RENDER_CHUNK 64
@@ -416,6 +432,9 @@ static int32_t renderWavThread(void *ptr)
 			else
 				fwrite(wavRenderBuffer, sizeof (float), samplesInChunk, f);
 		}
+#ifdef __EMSCRIPTEN__
+		webLongTaskYield(); // BerntTracker (web): no threads - keep the screen alive, a key/click stops it
+#endif
 	}
 
 	updateVisuals();
@@ -475,7 +494,7 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 		}
 
 		sprintf(newFilename, "%s (ch %02d of %02d).wav", tmpFilename, j+1, song.numChannels);
-		FILE *f = fopen(newFilename, "wb");
+		FILE *f = fopenCp850(newFilename, "wb");
 		if (f == NULL)
 		{
 			editor.stopWavRender = false;
@@ -589,6 +608,9 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 				else
 					fwrite(wavRenderBuffer, sizeof (float), samplesInChunk, f);
 			}
+#ifdef __EMSCRIPTEN__
+			webLongTaskYield(); // BerntTracker (web): no threads - keep the screen alive, a key/click stops it
+#endif
 		}
 
 		stopPlaying();
@@ -684,7 +706,7 @@ static void wavRender(bool checkOverwrite)
 				return;
 		}
 
-		editor.wavRendererFileHandle = fopen(filename, "wb");
+		editor.wavRendererFileHandle = fopenCp850(filename, "wb");
 		if (editor.wavRendererFileHandle == NULL)
 		{
 			okBox(0, "System message", "General I/O error while writing to WAV (is the file in use)?", NULL);

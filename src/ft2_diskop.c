@@ -593,7 +593,7 @@ static bool makeDirAnsi(char *str)
 	if (strU == NULL)
 		return false;
 
-	int32_t retVal = mkdir(str, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+	int32_t retVal = mkdir(strU, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH); // BerntTracker: was mkdir(str) (cp850 name, broke "æøå")
 	free(strU);
 
 	return (retVal == 0);
@@ -750,6 +750,12 @@ void diskOpSetFilename(uint8_t type, UNICHAR *pathU)
 
 static void openFile(UNICHAR *filenameU)
 {
+#ifdef __EMSCRIPTEN__
+	// BerntTracker (web): songs from the Modland library / demo library are downloaded when first opened
+	if (!webPrepareFile(filenameU))
+		return;
+#endif
+
 	// first check if we can actually open the requested file
 	FILE *f = UNICHAR_FOPEN(filenameU, "rb");
 	if (f == NULL)
@@ -2253,6 +2259,8 @@ static void drawDiskOpScreen(void)
 #ifdef __EMSCRIPTEN__
 	showPushButton(PB_DISKOP_IMPORT);
 	showPushButton(PB_DISKOP_EXPORT);
+	showPushButton(PB_DISKOP_MODLAND);
+	showPushButton(PB_DISKOP_FIND);
 #endif
 	showPushButton(PB_DISKOP_SET_PATH);
 	showPushButton(PB_DISKOP_LIST_UP);
@@ -2358,6 +2366,8 @@ void hideDiskOpScreen(void)
 #ifdef __EMSCRIPTEN__
 	hidePushButton(PB_DISKOP_IMPORT);
 	hidePushButton(PB_DISKOP_EXPORT);
+	hidePushButton(PB_DISKOP_MODLAND);
+	hidePushButton(PB_DISKOP_FIND);
 #endif
 	hidePushButton(PB_DISKOP_SET_PATH);
 	hidePushButton(PB_DISKOP_LIST_UP);
@@ -2600,6 +2610,45 @@ void rbDiskOpSmpSaveWav(void)
 
 void pbDiskOpImport(void) { } // the page opens the file picker itself (it must happen during the tap)
 void pbDiskOpExport(void) { } // same for sharing/downloading the file
+
+// "Modland" button: the online library (https://modland.com, the Fasttracker 2 folder) as folders
+void pbDiskOpModland(void)
+{
+	if (!webModlandPrepare())
+		return; // the page says what went wrong
+
+	if (FReq_Item != DISKOP_ITEM_MODULE)
+		rbDiskOpModule();
+
+	openDirectory(WEB_MODLAND_ROOT);
+}
+
+// "Find" button: search the Modland library (artist or song name)
+void pbDiskOpFind(void)
+{
+	FReq_NameTemp[0] = '\0';
+	if (inputBox(1, "Search Modland (artist/song):", FReq_NameTemp, 40) != 1 || FReq_NameTemp[0] == '\0')
+		return;
+
+	char *queryU = cp850ToUtf8(FReq_NameTemp);
+	const int32_t hits = webModlandSearch((queryU != NULL) ? queryU : FReq_NameTemp);
+	if (queryU != NULL)
+		free(queryU);
+
+	if (hits < 0)
+		return; // the page says what went wrong
+
+	if (hits == 0)
+	{
+		okBox(0, "System message", "Nothing found in Modland.", NULL);
+		return;
+	}
+
+	if (FReq_Item != DISKOP_ITEM_MODULE)
+		rbDiskOpModule();
+
+	openDirectory(WEB_MODLAND_SEARCH_DIR);
+}
 
 bool webDiskOpIsShown(void)
 {

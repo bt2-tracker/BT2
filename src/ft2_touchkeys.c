@@ -196,6 +196,13 @@ typedef struct pointer_t
 } pointer_t;
 
 static bool shown = false, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
+
+/* "Right click" button on the thin bar: for touch screens (no right mouse button). When it's on,
+** the next tap on the FT2 screen is a right click (rename instrument, scope multi-rec, draw sample...).
+*/
+#define RCLICK_X 70
+#define RCLICK_W 104
+static bool rightClickLatch, rightClickActive;
 static uint8_t heldCount[NUM_KEYS];
 static pointer_t pointers[MAX_POINTERS];
 static uint32_t *kbBuffer;
@@ -724,6 +731,10 @@ static void tk_drawMiniBar(void) // shown when the keyboard is hidden
 	char str[32];
 	sprintf(str, "OCT %d", editor.curOctave);
 	tk_tinyText(8, 8, str, 0x7D92AA);
+
+	// "Right click" button (touch screens)
+	tk_drawButton(RCLICK_X, 2, RCLICK_W, TK_MINI_H - 4, catFill[rightClickLatch ? C_ACTIVE : C_MOD], rightClickLatch);
+	tk_bigText(RCLICK_X + 8 + (rightClickLatch ? 1 : 0), 5 + (rightClickLatch ? 1 : 0), "Right click", 0x000000);
 	tk_tinyText(TK_W - 214, 8, "CTRL+K OR TAP HERE", 0x7D92AA);
 
 	// "Keyboard" button
@@ -785,6 +796,7 @@ static uint64_t tk_getStateHash(void)
 	#define HASH(v) h = (h ^ (uint64_t)(v)) * 1099511628211ULL
 
 	HASH(shown);
+	HASH(rightClickLatch);
 	HASH(tk_getLayer());
 	HASH(shiftOn); HASH(ctrlOn); HASH(altOn); HASH(fnOn); HASH(kpPlusOn);
 	HASH(editor.curOctave);
@@ -867,6 +879,16 @@ static bool tk_pointInKeyboard(int32_t winX, int32_t winY)
 	       winY >= kbWinRect.y && winY < kbWinRect.y+kbWinRect.h;
 }
 
+// key code for a scancode (some keys, like "<" next to left Shift, have none in the default key map)
+static SDL_Keycode tk_keycode(SDL_Scancode sc)
+{
+	SDL_Keycode k = SDL_GetKeyFromScancode(sc);
+	if (k == SDLK_UNKNOWN)
+		k = (sc == SDL_SCANCODE_NONUSBACKSLASH) ? SDLK_LESS : (SDL_Keycode)SDL_SCANCODE_TO_KEYCODE(sc);
+
+	return k;
+}
+
 // While a dialog box (system request) is open, it reads SDL events itself, so we post real events
 static void tk_pushKeyEvent(SDL_Scancode sc, bool down)
 {
@@ -876,7 +898,7 @@ static void tk_pushKeyEvent(SDL_Scancode sc, bool down)
 	e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
 	e.key.windowID = SDL_GetWindowID(video.window);
 	e.key.keysym.scancode = sc;
-	e.key.keysym.sym = SDL_GetKeyFromScancode(sc);
+	e.key.keysym.sym = tk_keycode(sc);
 	e.key.keysym.mod = (Uint16)((shiftOn ? KMOD_LSHIFT : 0) | (ctrlOn ? KMOD_LCTRL : 0) | (altOn ? KMOD_LALT : 0));
 	SDL_PushEvent(&e);
 }
@@ -906,7 +928,7 @@ static void tk_sendKeyDown(SDL_Scancode sc)
 	}
 
 	readKeyModifiers(); // includes our sticky modifiers (tkApplyModifiers)
-	keyDownHandler(sc, SDL_GetKeyFromScancode(sc), false);
+	keyDownHandler(sc, tk_keycode(sc), false);
 }
 
 static void tk_sendKeyUp(SDL_Scancode sc)
@@ -918,7 +940,7 @@ static void tk_sendKeyUp(SDL_Scancode sc)
 	}
 
 	readKeyModifiers();
-	keyUpHandler(sc, SDL_GetKeyFromScancode(sc));
+	keyUpHandler(sc, tk_keycode(sc));
 }
 
 static void tk_releaseStickyModifiers(void)
@@ -1072,7 +1094,14 @@ static void tk_pointerDown(int64_t id, int32_t winX, int32_t winY)
 {
 	if (!shown)
 	{
-		tkToggle(); // tapping the thin bar brings the keyboard back
+		const int32_t lx = (kbWinRect.w > 0) ? (int32_t)(((int64_t)(winX - kbWinRect.x) * TK_W) / kbWinRect.w) : -1;
+		if (lx >= RCLICK_X && lx < RCLICK_X + RCLICK_W)
+		{
+			rightClickLatch ^= 1; // "Right click" button
+			return;
+		}
+
+		tkToggle(); // tapping the rest of the thin bar brings the keyboard back
 		return;
 	}
 
@@ -1107,7 +1136,7 @@ static bool tk_pointerUp(int64_t id)
 	return true;
 }
 
-bool tkHandleEvent(const SDL_Event *event)
+bool tkHandleEvent(SDL_Event *event)
 {
 	switch (event->type)
 	{
@@ -1133,7 +1162,16 @@ bool tkHandleEvent(const SDL_Event *event)
 		case SDL_MOUSEBUTTONDOWN:
 		{
 			if (!tk_pointInKeyboard(event->button.x, event->button.y))
+			{
+				// "Right click" button is on: this click on the FT2 screen becomes a right click
+				if (rightClickLatch && event->button.button == SDL_BUTTON_LEFT)
+				{
+					event->button.button = SDL_BUTTON_RIGHT;
+					rightClickLatch = false;
+					rightClickActive = true;
+				}
 				return false;
+			}
 
 			if (event->button.which != SDL_TOUCH_MOUSEID && event->button.button == SDL_BUTTON_LEFT)
 				tk_pointerDown(MOUSE_POINTER_ID, event->button.x, event->button.y);
@@ -1143,6 +1181,13 @@ bool tkHandleEvent(const SDL_Event *event)
 
 		case SDL_MOUSEBUTTONUP:
 		{
+			if (rightClickActive && event->button.button == SDL_BUTTON_LEFT)
+			{
+				event->button.button = SDL_BUTTON_RIGHT; // end of the converted right click
+				rightClickActive = false;
+				return false;
+			}
+
 			if (event->button.which != SDL_TOUCH_MOUSEID && event->button.button == SDL_BUTTON_LEFT)
 			{
 				if (tk_pointerUp(MOUSE_POINTER_ID))

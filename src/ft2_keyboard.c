@@ -62,13 +62,17 @@ int8_t scancodeKeyToNote(SDL_Scancode scancode)
 
 void readKeyModifiers(void)
 {
-	const SDL_Keymod modState = SDL_GetModState();
+	setKeyModifiers(SDL_GetModState());
+}
+
+void setKeyModifiers(SDL_Keymod modState) // BerntTracker: split out of readKeyModifiers()
+{
 
 	keyb.leftCtrlPressed = (modState & KMOD_LCTRL) ? true : false;
 	keyb.leftAltPressed = (modState & KMOD_LALT) ? true : false;
 	keyb.leftShiftPressed = (modState & KMOD_LSHIFT) ? true : false;
-#ifdef __APPLE__
-	keyb.leftCommandPressed = (modState & KMOD_LGUI) ? true : false;
+#if defined __APPLE__ || defined __EMSCRIPTEN__
+	keyb.leftCommandPressed = (modState & KMOD_LGUI) ? true : false; // (BerntTracker: also iPad/Mac in the browser)
 #endif
 	keyb.keyModifierDown = (modState & (KMOD_LSHIFT | KMOD_LCTRL | KMOD_LALT | KMOD_LGUI)) ? true : false;
 
@@ -155,10 +159,14 @@ void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepea
 
 	if (keycode == SDLK_ESCAPE)
 	{
+#ifdef __EMSCRIPTEN__
+		return; // BerntTracker (web): a web page can't quit, quitting would only freeze the program
+#else
 		if (quitBox(false) == 1)
 			editor.throwExit = true;
 
 		return;
+#endif
 	}
 
 	if (scancode == SDL_SCANCODE_KP_PLUS)
@@ -387,8 +395,8 @@ static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 		case SDLK_RSHIFT: startPlaying(PLAYMODE_RECPATT, 0); break;
 
 		// play song
-#ifdef __APPLE__
-		case SDLK_RGUI: // fall-through for Apple keyboards
+#if defined __APPLE__ || defined __EMSCRIPTEN__
+		case SDLK_RGUI: // fall-through for Apple keyboards (BerntTracker: also iPad/Mac in the browser)
 #endif
 		case SDLK_RCTRL:
 			startPlaying(PLAYMODE_SONG, 0);

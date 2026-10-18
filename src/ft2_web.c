@@ -26,6 +26,9 @@
 #include "scopes/ft2_scopes.h"
 #include "ft2_palette.h"
 #include "ft2_tables.h"
+#include "ft2_keyboard.h"
+#include "ft2_replayer.h"
+#include "ft2_pattern_ed.h"
 #include "mixer/ft2_mix.h"
 
 void webScopesTick(void); // ft2_scopes.c
@@ -349,6 +352,12 @@ EMSCRIPTEN_KEEPALIVE float *webAudioRenderChunk(int32_t frames)
 	return chunkBuffer;
 }
 
+// called from JS when the engine's delay changes (engine switch, compat queue size), for the visual sync
+EMSCRIPTEN_KEEPALIVE void webSetLatencyFrames(int32_t frames)
+{
+	webAudioSetLatencyFrames(frames);
+}
+
 // called from JS when the user picks another engine (the JS side swaps the audio nodes right after)
 EMSCRIPTEN_KEEPALIVE void webSetAudioMode(int32_t mode)
 {
@@ -398,6 +407,188 @@ void webAudioPause(bool pause)
 }
 
 // ------------------------------------------------------------------------------------------------
+// keyboard (hardware/Bluetooth keyboards in the browser)
+
+/* The browser sometimes gives no key code for a key (for instance the "<" key next to left Shift
+** on Nordic keyboards, keyCode 226). FT2 ignores keys without a key code, so the key would do
+** nothing (no key-off). Use the key's position (scancode) instead.
+*/
+SDL_Keycode webFixKeycode(SDL_Scancode scancode, SDL_Keycode keycode)
+{
+	// modifier keys: trust the key position (Safari/Chrome on Mac give right Cmd the "context menu" key code)
+	if (scancode >= SDL_SCANCODE_LCTRL && scancode <= SDL_SCANCODE_RGUI)
+		return (SDL_Keycode)SDL_SCANCODE_TO_KEYCODE(scancode);
+
+	if (keycode != SDLK_UNKNOWN || scancode == SDL_SCANCODE_UNKNOWN)
+		return keycode;
+
+	if (scancode == SDL_SCANCODE_NONUSBACKSLASH)
+		return SDLK_LESS;
+
+	SDL_Keycode k = SDL_GetKeyFromScancode(scancode);
+	if (k == SDLK_UNKNOWN)
+		k = SDL_SCANCODE_TO_KEYCODE(scancode);
+
+	return k;
+}
+
+static void pushKey(SDL_Scancode scancode, bool down)
+{
+	SDL_Event ev;
+	memset(&ev, 0, sizeof (ev));
+	ev.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+	ev.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+	ev.key.windowID = (video.window != NULL) ? SDL_GetWindowID(video.window) : 0;
+	ev.key.keysym.scancode = scancode;
+	ev.key.keysym.sym = webFixKeycode(scancode, SDL_GetKeyFromScancode(scancode));
+	ev.key.keysym.mod = (Uint16)SDL_GetModState();
+	SDL_PushEvent(&ev);
+}
+
+// one full key press (down + up), e.g. Caps Lock on iPad/Mac where the browser only reports every other press
+EMSCRIPTEN_KEEPALIVE void webTapKey(int32_t scancode)
+{
+	pushKey((SDL_Scancode)scancode, true);
+	pushKey((SDL_Scancode)scancode, false);
+}
+
+/* Called from the page for every key and pointer event, with the modifier keys the browser says
+** are held (1 = Ctrl, 2 = Alt, 4 = Shift, 8 = Cmd/Win, 16 = AltGr). Fixes "stuck" modifiers when a
+** key-up got lost (app switch, system shortcut), and the fake left Ctrl that Windows sends with
+** AltGr (FT2 would then not start "play pattern" with the right Alt key).
+*/
+EMSCRIPTEN_KEEPALIVE void webSyncModifiers(int32_t flags)
+{
+	const SDL_Keymod m = SDL_GetModState();
+	SDL_Keymod n = m;
+
+	if (flags & 16) // AltGr is held: its "Ctrl" is not a real Ctrl
+		n &= ~KMOD_LCTRL;
+	else if (!(flags & 1))
+		n &= ~KMOD_CTRL;
+	else if (!(m & KMOD_CTRL))
+		n |= KMOD_LCTRL;
+
+	if (!(flags & 2) && !(flags & 16))
+		n &= ~KMOD_ALT;
+
+	if (!(flags & 4))
+		n &= ~KMOD_SHIFT;
+
+	if (!(flags & 8))
+		n &= ~KMOD_GUI;
+
+	if (n != m)
+		SDL_SetModState(n);
+}
+
+EM_JS(void, bt2_toggleFullscreen, (void), {
+	if (globalThis.BT2 && globalThis.BT2.toggleFullscreen) globalThis.BT2.toggleFullscreen();
+});
+
+void webToggleFullscreen(void)
+{
+	bt2_toggleFullscreen();
+}
+
+/* Open a file in the program (module, instrument, sample...) like when a file is dropped on the
+** window. The main loop does the loading (it may show dialog boxes), so we only post an event.
+*/
+EMSCRIPTEN_KEEPALIVE void webLoadFile(const char *path)
+{
+	if (path == NULL || path[0] == '\0')
+		return;
+
+	SDL_Event ev;
+	memset(&ev, 0, sizeof (ev));
+	ev.type = SDL_DROPFILE;
+	ev.drop.file = SDL_strdup(path);
+	ev.drop.windowID = (video.window != NULL) ? SDL_GetWindowID(video.window) : 0;
+	if (ev.drop.file != NULL && SDL_PushEvent(&ev) <= 0)
+		SDL_free(ev.drop.file);
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t webSongIsModified(void)
+{
+	return song.isModified ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t webIsEditingText(void)
+{
+	return (editor.editTextFlag || ui.sysReqShown) ? 1 : 0;
+}
+
+// for automatic tests: the editor state as JSON
+EMSCRIPTEN_KEEPALIVE const char *webDebugState(void)
+{
+	static char buf[2048];
+
+	const int32_t row = editor.row, ch = cursor.ch, patt = editor.editPattern;
+	note_t n;
+	memset(&n, 0, sizeof (n));
+	if (patt >= 0 && patt < MAX_PATTERNS && pattern[patt] != NULL && row < patternNumRows[patt])
+		n = pattern[patt][(row * MAX_CHANNELS) + ch];
+
+	char name[21];
+	int32_t j = 0;
+	for (int32_t i = 0; i < 20 && song.name[i] != '\0'; i++)
+	{
+		const char c = song.name[i];
+		name[j++] = (c >= 32 && c < 127 && c != '"' && c != '\\') ? c : '?';
+	}
+	name[j] = '\0';
+
+	const SDL_Keymod mod = SDL_GetModState();
+	snprintf(buf, sizeof (buf),
+		"{\"row\":%d,\"ch\":%d,\"obj\":%d,\"patt\":%d,\"rows\":%d,\"songPos\":%d,\"playMode\":%d,\"songPlaying\":%d,"
+		"\"octave\":%d,\"skip\":%d,\"instr\":%d,\"note\":%d,\"ins\":%d,\"vol\":%d,\"efx\":%d,\"efxData\":%d,"
+		"\"lctrl\":%d,\"lalt\":%d,\"lshift\":%d,\"mod\":%d,\"editText\":%d,\"sysReq\":%d,"
+		"\"patternEd\":%d,\"diskOp\":%d,\"instEd\":%d,\"smpEd\":%d,\"config\":%d,\"help\":%d,\"about\":%d,\"nibbles\":%d,"
+		"\"extended\":%d,\"screenH\":%d,\"numCh\":%d,\"songName\":\"%s\","
+		"\"advEdit\":%d,\"transp\":%d,\"trim\":%d,\"instExt\":%d,\"smpExt\":%d,\"cfgScreen\":%d,"
+		"\"jump\":[%d,%d,%d,%d],\"markX1\":%d,\"markX2\":%d,\"markY1\":%d,\"markY2\":%d,"
+		"\"masterVol\":%d,\"bankOffset\":%d,\"bankSwapped\":%d,\"songLen\":%d,\"pattNum\":%d,\"muted0\":%d,"
+		"\"wavShown\":%d,\"wavRendering\":%d}",
+		row, ch, cursor.object, patt, (patt >= 0 && patt < MAX_PATTERNS) ? patternNumRows[patt] : 0, song.songPos, playMode,
+		songPlaying ? 1 : 0, editor.curOctave, editor.editRowSkip, editor.curInstr, n.note, n.instr, n.vol, n.efx, n.efxData,
+		keyb.leftCtrlPressed, keyb.leftAltPressed, keyb.leftShiftPressed, (int32_t)mod, editor.editTextFlag, ui.sysReqShown,
+		ui.patternEditorShown, ui.diskOpShown, ui.instEditorShown, ui.sampleEditorShown, ui.configScreenShown,
+		ui.helpScreenShown, ui.aboutScreenShown, ui.nibblesShown, ui.extendedPatternEditor, SCREEN_H, song.numChannels, name,
+		ui.advEditShown, ui.transposeShown, ui.trimScreenShown, ui.instEditorExtShown, ui.sampleEditorExtShown,
+		editor.currConfigScreen, editor.ptnJumpPos[0], editor.ptnJumpPos[1], editor.ptnJumpPos[2], editor.ptnJumpPos[3],
+		pattMark.markX1, pattMark.markX2, pattMark.markY1, pattMark.markY2, config.masterVol, editor.instrBankOffset,
+		editor.instrBankSwapped, song.songLength, song.pattNum, editor.channelMuted[0],
+		ui.wavRendererShown, editor.wavIsRendering);
+
+	return buf;
+}
+
+// ------------------------------------------------------------------------------------------------
+// long tasks (WAV rendering): FT2 runs them in a thread, here they run on the main thread
+
+void webLongTaskYield(void)
+{
+	static uint32_t lastTicks;
+
+	const uint32_t now = SDL_GetTicks();
+	if (now - lastTicks < 40)
+		return;
+
+	lastTicks = now;
+
+	// like FT2 while busy: input is dropped, but a key press or a click stops the rendering
+	SDL_Event ev;
+	while (SDL_PollEvent(&ev))
+	{
+		if (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_KEYDOWN)
+			editor.stopWavRender = true;
+	}
+
+	handleRedrawing();
+	flipFrame(); // shows the progress and gives the browser some time
+}
+
+// ------------------------------------------------------------------------------------------------
 // files
 
 EM_JS(void, bt2_syncFiles, (void), { globalThis.BT2.syncFiles(); });
@@ -405,6 +596,36 @@ EM_JS(void, bt2_syncFiles, (void), { globalThis.BT2.syncFiles(); });
 void webSyncFiles(void)
 {
 	bt2_syncFiles();
+}
+
+EM_ASYNC_JS(int32_t, bt2_prepareFile, (const char *path), {
+	try { return (await globalThis.BT2.prepareFile(UTF8ToString(path))) ? 1 : 0; }
+	catch (e) { console.error('prepareFile', e); return 0; }
+});
+
+bool webPrepareFile(const char *path)
+{
+	return bt2_prepareFile(path) != 0;
+}
+
+EM_ASYNC_JS(int32_t, bt2_modlandPrepare, (void), {
+	try { return (await globalThis.BT2.modlandPrepare()) ? 1 : 0; }
+	catch (e) { console.error('modland', e); return 0; }
+});
+
+EM_ASYNC_JS(int32_t, bt2_modlandSearch, (const char *query), {
+	try { return await globalThis.BT2.modlandSearch(UTF8ToString(query)); }
+	catch (e) { console.error('modland search', e); return -1; }
+});
+
+bool webModlandPrepare(void)
+{
+	return bt2_modlandPrepare() != 0;
+}
+
+int32_t webModlandSearch(const char *query)
+{
+	return bt2_modlandSearch(query);
 }
 
 EMSCRIPTEN_KEEPALIVE void webImportDone(void) // called from JS when imported files have been written
@@ -484,8 +705,8 @@ void webAfterSetup(void)
 	EM_ASM({ globalThis.BT2.appStarted(); });
 }
 
-EM_JS(void, bt2_frame, (int32_t rx, int32_t ry, int32_t rw, int32_t rh, int32_t diskOpShown), {
-	globalThis.BT2.frame(rx, ry, rw, rh, diskOpShown);
+EM_JS(void, bt2_frame, (int32_t rx, int32_t ry, int32_t rw, int32_t rh, int32_t diskOpShown, int32_t screenH), {
+	globalThis.BT2.frame(rx, ry, rw, rh, diskOpShown, screenH);
 });
 
 void webFrame(void)
@@ -496,7 +717,7 @@ void webFrame(void)
 	webScopesTick();
 
 	// tell the page where the FT2 screen is (for the Import/Export buttons in Disk Op.)
-	bt2_frame(video.renderX, video.renderY, video.renderW, video.renderH, webDiskOpIsShown() ? 1 : 0);
+	bt2_frame(video.renderX, video.renderY, video.renderW, video.renderH, webDiskOpIsShown() ? 1 : 0, SCREEN_H);
 
 	// every ~3 seconds: remember Disk Op. folders, save config if it changed
 	if (++frameCounter >= 180)
