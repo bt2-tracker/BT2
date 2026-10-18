@@ -77,7 +77,7 @@ button.small {
 	<div class="logo">Bernttracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.8 · 18.10.2026</div>
+	<div class="mode">Versjon 0.9 · 18.10.2026</div>
 	<button class="small" id="diagButton">Lydtest</button>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
@@ -174,9 +174,15 @@ button.small {
 			if (e === 'worklet' && !BT2.hasWorklet) e = 'compat';
 			return e;
 		},
+		// The low-latency engine is slow when it is started together with the program (Safari),
+		// but fine when it is switched on after the start tap. So the program always starts with the
+		// compat engine, and switches to the low-latency one right after "Trykk for å starte".
+		deferredEngine: null,
 		wantedEngineCode(hasWorklet) {
 			BT2.hasWorklet = !!hasWorklet;
-			return BT2.ENGINES.indexOf(BT2.wantedEngine());
+			const e = BT2.wantedEngine();
+			if (e === 'worklet') { BT2.deferredEngine = 'worklet'; return BT2.ENGINES.indexOf('compat'); }
+			return BT2.ENGINES.indexOf(e);
 		},
 
 		resumeHooked: false,
@@ -243,12 +249,30 @@ button.small {
 		},
 
 		// picked in the sound test: switch right away, remember for next time
-		async switchEngine(name) {
+		async switchEngine(name, quiet) {
 			if (!BT2.ctx) return;
+			if (!quiet) BT2.deferredEngine = null;
+			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
+				// picked before the start tap: switch right after it (see deferredEngine)
+				BT2.deferredEngine = 'worklet';
+				try { localStorage.setItem('bt2-engine-v2', 'worklet'); } catch (e) {}
+				BT2.showAudioMode();
+				diagUpdate();
+				return;
+			}
+			if (!quiet) BT2.deferredEngine = null;
+			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
+				// picked before the start tap: switch right after it (see deferredEngine)
+				BT2.deferredEngine = 'worklet';
+				try { localStorage.setItem('bt2-engine-v2', 'worklet'); } catch (e) {}
+				BT2.showAudioMode();
+				diagUpdate();
+				return;
+			}
 			if (name === 'worklet') {
 				if (!BT2.hasWorklet) { BT2.toast('Lav forsinkelse-motoren virker ikke i denne nettleseren'); return; }
 				if (!BT2.workletNode) {
-					BT2.toast('Starter motoren…');
+					if (!quiet) BT2.toast('Starter motoren…');
 					await new Promise((res) => { BT2.onWorkletReady = res; setTimeout(res, 8000); Module._webStartWorkletThread(); });
 					BT2.onWorkletReady = null;
 					if (!BT2.workletNode) { BT2.toast('Kunne ikke starte lav forsinkelse-motoren'); return; }
@@ -261,7 +285,7 @@ button.small {
 			}
 			try { localStorage.setItem('bt2-engine-v2', BT2.audioMode); } catch (e) {}
 			BT2.ctx.resume().catch(() => {});
-			BT2.toast('Lyd: ' + BT2.ENGINE_NAMES[BT2.audioMode]);
+			if (!quiet) BT2.toast('Lyd: ' + BT2.ENGINE_NAMES[BT2.audioMode]);
 			diagUpdate();
 		},
 
@@ -282,11 +306,12 @@ button.small {
 		showAudioMode() {
 			const c = BT2.ctx;
 			if (!c) return;
-			const name = BT2.audioMode === 'worklet' ? 'lav forsinkelse' : BT2.audioMode === 'sp' ? 'SP-modus' : 'kompatibel modus';
+			const mode = BT2.deferredEngine || BT2.audioMode;
+			const name = mode === 'worklet' ? 'lav forsinkelse' : mode === 'sp' ? 'SP-modus' : 'kompatibel modus';
 			$('audioMode').innerHTML = 'Lyd: <b>' + name + '</b> · ' + c.sampleRate + ' Hz · ca. ' + BT2.latencyMs() + ' ms';
 			['worklet', 'compat', 'sp'].forEach((e) => {
 				const b = $('engine-' + e);
-				if (b) b.classList.toggle('on', BT2.audioMode === e);
+				if (b) b.classList.toggle('on', mode === e);
 			});
 		},
 
@@ -524,7 +549,13 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
 
 	$('startButton').addEventListener('click', () => {
-		if (BT2.ctx) BT2.ctx.resume().catch(() => {});
+		if (BT2.ctx) {
+			const deferred = BT2.deferredEngine;
+			BT2.deferredEngine = null;
+			BT2.ctx.resume().catch(() => {}).then(() => {
+				if (deferred) setTimeout(() => BT2.switchEngine(deferred, true), 150);
+			});
+		}
 		BT2.started = true;
 		$('start').classList.add('hidden');
 		$('canvas').focus();
@@ -552,6 +583,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			}
 			if (BT2.audioMode === 'compat') L.push('Buffer:         ' + BT2.compatTarget + ' samples');
 			if (BT2.audioMode === 'sp') L.push('Buffer:         ' + BT2.spSize + ' samples');
+			if (BT2.audioMode === 'worklet') L.push('Buffer:         128 samples (fast, i lydtråden)');
+			if (BT2.deferredEngine) L.push('Bytter til:     lav forsinkelse når du trykker Start');
 			L.push('Ca. forsinkelse: ' + BT2.latencyMs() + ' ms');
 		}
 		L.push('Enhet:          ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 60));
