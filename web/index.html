@@ -77,7 +77,7 @@ button.small {
 	<div class="logo">Bernttracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.7 · 18.10.2026</div>
+	<div class="mode">Versjon 0.8 · 18.10.2026</div>
 	<button class="small" id="diagButton">Lydtest</button>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
@@ -163,14 +163,14 @@ button.small {
 			return /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS|Android/.test(ua);
 		},
 		savedEngine() {
-			try { const e = localStorage.getItem('bt2-engine'); if (BT2.ENGINES.includes(e)) return e; } catch (e) {}
+			try { const e = localStorage.getItem('bt2-engine-v2'); if (BT2.ENGINES.includes(e)) return e; } catch (e) {}
 			return '';
 		},
 		wantedEngine() {
 			let e = BT2.savedEngine();
 			if (/[?&]sp\b/.test(location.search)) e = 'sp'; // old links
 			else if (/[?&]compat\b/.test(location.search)) e = 'compat';
-			if (!e) e = 'worklet'; // the lowest delay (also on iPad, tested 18.10.2026)
+			if (!e) e = 'compat'; // most stable at startup on iPad/iPhone (18.10.2026)
 			if (e === 'worklet' && !BT2.hasWorklet) e = 'compat';
 			return e;
 		},
@@ -259,7 +259,7 @@ button.small {
 				Module._webSetAudioMode(2);
 				await BT2.attachEngine('sp');
 			}
-			try { localStorage.setItem('bt2-engine', BT2.audioMode); } catch (e) {}
+			try { localStorage.setItem('bt2-engine-v2', BT2.audioMode); } catch (e) {}
 			BT2.ctx.resume().catch(() => {});
 			BT2.toast('Lyd: ' + BT2.ENGINE_NAMES[BT2.audioMode]);
 			diagUpdate();
