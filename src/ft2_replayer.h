@@ -243,7 +243,7 @@ typedef struct instr_t
 typedef struct channel_t
 {
 	bool dontRenderThisChannel, keyOff, channelOff, mute, semitonePortaMode;
-	volatile uint8_t status, tmpStatus;
+	volatile uint8_t status, tmpStatus, jamStatus; // jamStatus: BerntTracker (notes played right away)
 	int8_t relativeNote, finetune;
 	uint8_t smpNum, instrNum, efxData, efx, sampleOffset, tremorParam, tremorPos;
 	uint8_t globVolSlideSpeed, panningSlideSpeed, vibTremCtrl, portamentoDirection;

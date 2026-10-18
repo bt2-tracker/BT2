@@ -3091,6 +3091,8 @@ void playTone(uint8_t chNum, uint8_t insNum, uint8_t note, int8_t vol, uint16_t 
 
 	updateVolPanAutoVib(ch);
 
+	audio.jamPending = true; // BerntTracker: start the note now, not at the next tick
+
 	unlockAudio();
 }
 

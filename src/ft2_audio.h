@@ -35,7 +35,7 @@ typedef struct audio_t
 {
 	char *currInputDevice, *currOutputDevice, *lastWorkingAudioDeviceName;
 	char *inputDeviceNames[MAX_AUDIO_DEVICES], *outputDeviceNames[MAX_AUDIO_DEVICES];
-	volatile bool locked, resetSyncTickTimeFlag, volumeRampingFlag, callbackOngoing;
+	volatile bool locked, resetSyncTickTimeFlag, volumeRampingFlag, callbackOngoing, jamPending;
 	bool linearPeriodsFlag, rescanAudioDevicesSupported;
 	volatile uint8_t interpolationType;
 	int32_t inputDeviceNum, outputDeviceNum, lastWorkingAudioFreq, lastWorkingAudioBits;

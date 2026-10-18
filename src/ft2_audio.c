@@ -338,7 +338,9 @@ void updateVoices(void)
 
 	for (int32_t i = 0; i < song.numChannels; i++, ch++, v++)
 	{
-		const uint8_t status = ch->tmpStatus = ch->status; // (tmpStatus is used for audio/video sync queue)
+		const uint8_t status = ch->status;
+		ch->tmpStatus = status | ch->jamStatus; // (tmpStatus is used for audio/video sync queue)
+		ch->jamStatus = 0;
 		if (status == 0)
 			continue;
 
@@ -895,6 +897,23 @@ static void audioCallback(void *userdata, Uint8 *stream, int len)
 		return;
 
 	audio.callbackOngoing = true;
+
+	/* BerntTracker: notes played from the keyboard are started right away, instead of
+	** waiting for the next replayer tick (that can be up to ~20ms later at 125 BPM).
+	*/
+	if (audio.jamPending && !musicPaused)
+	{
+		audio.jamPending = false;
+
+		uint8_t jamStatus[MAX_CHANNELS];
+		for (int32_t i = 0; i < song.numChannels; i++)
+			jamStatus[i] = channel[i].status;
+
+		updateVoices();
+
+		for (int32_t i = 0; i < song.numChannels; i++)
+			channel[i].jamStatus |= jamStatus[i]; // so scopes etc. still see the note at the next tick
+	}
 
 	int32_t bufferPosition = 0;
 

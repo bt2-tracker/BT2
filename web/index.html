@@ -68,6 +68,7 @@ button.big {
 	<div class="logo">Berntracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
+	<div class="mode">Versjon 0.2 · 18.10.2026</div>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
 		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
@@ -100,13 +101,20 @@ button.big {
 		syncAgain: false,
 
 		// ---------- main loop timing (~60 frames per second, follows the screen refresh)
+		// Input (touch/keys/mouse) wakes the program right away instead of waiting for the next
+		// screen refresh, so notes start as fast as possible.
+		wake: null,
 		waitFrame() {
 			return new Promise((resolve) => {
+				let done = false;
+				const finish = () => { if (!done) { done = true; BT2.wake = null; resolve(); } };
+				BT2.wake = finish;
 				const tick = (t) => {
-					if (t - BT2.lastFrame >= 15.0 || document.hidden) { BT2.lastFrame = t; resolve(); }
+					if (done) return;
+					if (t - BT2.lastFrame >= 15.0 || document.hidden) { BT2.lastFrame = t; finish(); }
 					else requestAnimationFrame(tick);
 				};
-				if (document.hidden) setTimeout(() => resolve(), 50);
+				if (document.hidden) setTimeout(finish, 50);
 				else requestAnimationFrame(tick);
 			});
 		},
@@ -140,7 +148,8 @@ button.big {
 		},
 
 		// compat mode: the mixer runs on the main thread and fills a small queue
-		compatTarget: 1024,
+		compatTarget: 512,
+		compatLastUnderrun: 0,
 		compatSent: 0,
 		compatConsumed: 0,
 		compatReportTime: 0,
@@ -172,7 +181,14 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				node.port.onmessage = (e) => {
 					BT2.compatConsumed = e.data.consumed;
 					BT2.compatReportTime = performance.now();
-					if (e.data.under && BT2.started && BT2.compatTarget < 4096) BT2.compatTarget += 256;
+					const now = performance.now();
+					if (e.data.under && BT2.started) {
+						if (BT2.compatTarget < 4096) BT2.compatTarget += 128;
+						BT2.compatLastUnderrun = now;
+					} else if (now - BT2.compatLastUnderrun > 3000 && BT2.compatTarget > 384) {
+						BT2.compatTarget -= 128; // no dropouts for a while: try a smaller buffer again
+						BT2.compatLastUnderrun = now;
+					}
 				};
 				node.connect(ctx.destination);
 				BT2.compatNode = node;
@@ -192,7 +208,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			let queued = BT2.compatSent - BT2.compatConsumed - since;
 			let guard = 0;
 			while (queued < BT2.compatTarget && guard++ < 32) {
-				const frames = 256;
+				const frames = 128;
 				const ptr = Module._webAudioRenderChunk(frames);
 				const data = Module.HEAPF32.slice(ptr >> 2, (ptr >> 2) + frames * 2);
 				BT2.compatNode.port.postMessage(data, [data.buffer]);
@@ -290,6 +306,10 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		if (BT2.hitButton(e.clientX, e.clientY, 134, 33, 31, 22)) BT2.doImport();
 		else if (BT2.hitButton(e.clientX, e.clientY, 134, 57, 31, 22)) BT2.doExport();
 	}, { capture: true });
+
+	// wake the program as soon as there is input (after the program's own handlers have seen the event)
+	['pointerdown', 'pointerup', 'keydown', 'keyup', 'touchstart', 'touchend'].forEach((ev) =>
+		window.addEventListener(ev, () => { if (BT2.wake) setTimeout(() => BT2.wake && BT2.wake(), 0); }, { capture: true, passive: true }));
 
 	// no pinch-zoom, no scrolling, no long-press menus
 	['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault()));
