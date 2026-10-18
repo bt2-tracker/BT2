@@ -2652,6 +2652,8 @@ void rbDiskOpSmpSaveWav(void)
 // ------------------------------------------------------------------------------------------------
 // BerntTracker: web version helpers
 
+#include <emscripten.h>
+
 void pbDiskOpImport(void) { } // the page opens the file picker itself (it must happen during the tap)
 void pbDiskOpExport(void) { } // same for sharing/downloading the file
 
@@ -2667,31 +2669,13 @@ void pbDiskOpModland(void)
 	openDirectory(WEB_MODLAND_ROOT);
 }
 
-// "Find" button: search the Modland library (artist or song name)
+// "Find" button: the page's search window (songs and folders, in the user's own files and in Modland).
+// (The page also opens it right in the tap/click, so the iPad keyboard can come up.)
+EM_JS(void, bt2_searchOpen, (void), { if (globalThis.BT2 && globalThis.BT2.search) globalThis.BT2.search.open(); });
+
 void pbDiskOpFind(void)
 {
-	FReq_NameTemp[0] = '\0';
-	if (inputBox(1, "Search Modland (artist/song):", FReq_NameTemp, 40) != 1 || FReq_NameTemp[0] == '\0')
-		return;
-
-	char *queryU = cp850ToUtf8(FReq_NameTemp);
-	const int32_t hits = webModlandSearch((queryU != NULL) ? queryU : FReq_NameTemp);
-	if (queryU != NULL)
-		free(queryU);
-
-	if (hits < 0)
-		return; // the page says what went wrong
-
-	if (hits == 0)
-	{
-		okBox(0, "System message", "Nothing found in Modland.", NULL);
-		return;
-	}
-
-	if (FReq_Item != DISKOP_ITEM_MODULE)
-		rbDiskOpModule();
-
-	openDirectory(WEB_MODLAND_SEARCH_DIR);
+	bt2_searchOpen();
 }
 
 bool webDiskOpIsShown(void)

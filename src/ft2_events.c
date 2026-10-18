@@ -72,6 +72,10 @@ void handleThreadEvents(void)
 
 void handleEvents(void)
 {
+#ifdef __EMSCRIPTEN__
+	webHandlePageRequests(); // BerntTracker (web): e.g. "show this folder" from the search window
+#endif
+
 #ifdef HAS_MIDI
 	// called after MIDI has been initialized
 	if (midi.rescanDevicesFlag)

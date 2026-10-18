@@ -57,6 +57,40 @@ button.big {
 	padding: 8px 14px; font-size: 14px; line-height: 1.35; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,.5);
 	cursor: pointer; }
 #storageBanner.hidden { display: none; }
+/* the search window, drawn in FT2's own colours (set from the program's palette when it opens) */
+#search { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center;
+	background: rgba(0,0,0,.5); padding: 10px; box-sizing: border-box; }
+#search.hidden { display: none; }
+#search .ft-panel { width: min(780px, 100%); height: min(660px, 100%); display: flex; flex-direction: column; gap: 8px;
+	padding: 10px; box-sizing: border-box; background: var(--ft-desk); color: var(--ft-text);
+	border: 2px solid; border-color: var(--ft-desk1) var(--ft-desk2) var(--ft-desk2) var(--ft-desk1);
+	font: 700 15px/1.3 -apple-system, system-ui, "Segoe UI", Roboto, sans-serif; box-shadow: 0 6px 30px rgba(0,0,0,.6); }
+#search .ft-head { display: flex; align-items: center; gap: 10px; }
+#search .ft-title { flex: 1; font-size: 18px; letter-spacing: .5px; }
+#search .ft-btn { font: inherit; color: var(--ft-btntext); background: var(--ft-btn); border-radius: 0; cursor: pointer;
+	border: 2px solid; border-color: var(--ft-btn1) var(--ft-btn2) var(--ft-btn2) var(--ft-btn1); padding: 5px 12px; min-height: 36px; }
+#search .ft-btn:active, #search .ft-btn.on { border-color: var(--ft-btn2) var(--ft-btn1) var(--ft-btn1) var(--ft-btn2); }
+#search .ft-btn.on { box-shadow: inset 0 0 0 1px var(--ft-btn2); }
+#search .ft-btn.on::before { content: '\25CF\00A0'; }
+#search input { font: 600 18px/1.3 -apple-system, system-ui, "Segoe UI", sans-serif; color: var(--ft-pattext);
+	background: var(--ft-bg); padding: 8px 10px; outline: none; border-radius: 0; -webkit-appearance: none; appearance: none;
+	border: 2px solid; border-color: var(--ft-desk2) var(--ft-desk1) var(--ft-desk1) var(--ft-desk2);
+	-webkit-user-select: text; user-select: text; min-width: 0; }
+#search .ft-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+#search .ft-label { width: 44px; }
+#search .ft-list { flex: 1; overflow-y: auto; background: var(--ft-bg); touch-action: pan-y; overscroll-behavior: contain;
+	-webkit-overflow-scrolling: touch; border: 2px solid; border-color: var(--ft-desk2) var(--ft-desk1) var(--ft-desk1) var(--ft-desk2); }
+#search .ft-row { display: flex; align-items: center; gap: 10px; padding: 6px 10px; cursor: pointer; color: var(--ft-pattext);
+	min-height: 40px; box-sizing: border-box; }
+#search .ft-row.sel { background: var(--ft-blck); color: var(--ft-blcktxt); }
+#search .ft-kind { width: 18px; text-align: center; flex: none; opacity: .9; }
+#search .ft-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+#search .ft-name, #search .ft-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#search .ft-path { font-weight: 600; font-size: 12px; opacity: .65; }
+#search .ft-src { flex: none; font-size: 12px; opacity: .8; text-align: right; min-width: 64px; }
+#search .ft-small { min-height: 30px; padding: 2px 8px; font-size: 13px; flex: none; }
+#search .ft-status { font-size: 13px; font-weight: 600; min-height: 18px; }
+#search .ft-empty { padding: 14px; color: var(--ft-pattext); opacity: .8; font-weight: 600; }
 #net { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 30; background: #12161A;
 	color: var(--text); border: 1px solid #596169; border-radius: 8px; padding: 10px 16px; font-size: 15px; text-align: center; }
 #net .bar { margin-top: 8px; }
@@ -131,7 +165,9 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			den åpnes, og du velger selv om du vil oppdatere. En oppdatering endrer bare selve programmet –
 			låtene, samplene, mappene og innstillingene dine blir aldri rørt.</div>
 		<div class="appnote hidden" id="homeHint">Tips: trykk Del-knappen i Safari og velg «Legg til på Hjem-skjerm»,
-			så får du Bernttracker som eget app-ikon i fullskjerm. Da tar iPaden også bedre vare på filene dine.</div>
+			så får du Bernttracker som eget app-ikon i fullskjerm. Da tar iPaden også bedre vare på filene dine.
+			Merk: appen på Hjem-skjermen har egne filer og innstillinger, atskilt fra Safari. Bruk alltid den samme,
+			og flytt filer mellom dem med «Sikkerhetskopi (zip)» og «Imp.».</div>
 	</div>
 	<div class="status hidden" id="storageWarning" style="color:#F0B060">Kunne ikke lese de lagrede filene dine. For å beskytte dem lagres
 		ingenting i denne økten. Lukk appen helt og åpne den igjen.</div>
@@ -171,6 +207,31 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 
 <div id="toast"></div>
 <div id="storageBanner" class="hidden" role="alert"></div>
+<div id="search" class="hidden" role="dialog" aria-label="Søk">
+	<div class="ft-panel">
+		<div class="ft-head">
+			<span class="ft-title">Søk</span>
+			<button class="ft-btn" id="searchClose" aria-label="Lukk">Lukk</button>
+		</div>
+		<input id="searchInput" type="search" placeholder="Artist, låt eller mappe …" autocomplete="off" autocorrect="off"
+			autocapitalize="off" spellcheck="false" enterkeyhint="search">
+		<div class="ft-filters">
+			<span class="ft-label">Hvor</span>
+			<button class="ft-btn" data-where="all">Alle</button>
+			<button class="ft-btn" data-where="own">Mine filer</button>
+			<button class="ft-btn" data-where="modland">Modland</button>
+		</div>
+		<div class="ft-filters">
+			<span class="ft-label">Hva</span>
+			<button class="ft-btn" data-what="all">Alt</button>
+			<button class="ft-btn" data-what="song">Sanger</button>
+			<button class="ft-btn" data-what="folder">Mapper</button>
+			<button class="ft-btn" data-what="sound">Instr./samples</button>
+		</div>
+		<div id="searchList" class="ft-list" role="listbox"></div>
+		<div id="searchStatus" class="ft-status"></div>
+	</div>
+</div>
 <div id="net" class="hidden"><div id="netText"></div><div class="bar"><div id="netProgress"></div></div></div>
 <input type="file" id="importInput" multiple style="display:none">
 
@@ -180,7 +241,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.14';
+	const BT2_VERSION = '0.15';
 	const BT2_DATE = '18.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -1185,9 +1246,10 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 	// Imp./Exp. in Disk Op.: must run directly inside the tap (iPad/Safari rule for file pickers and sharing)
 	document.addEventListener('pointerup', (e) => {
-		if (!BT2.started || !BT2.diskOpShown) return;
+		if (!BT2.started || !BT2.diskOpShown || e.target !== $('canvas')) return;
 		if (BT2.hitButton(e.clientX, e.clientY, 134, 33, 31, 22)) BT2.doImport();
 		else if (BT2.hitButton(e.clientX, e.clientY, 134, 57, 31, 22)) BT2.doExport();
+		else if (BT2.hitButton(e.clientX, e.clientY, 134, 110, 31, 22)) BT2.search.open(); // Find
 	}, { capture: true });
 
 	// ---------- the FT2 about-screen starfield behind the logo (only while the loading/start screen is shown)
@@ -1266,6 +1328,257 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		};
 	})();
 	BT2.starfield = starfield;
+
+	// ---------- search window: songs and folders in the user's own files and in Modland
+	// Opened with Disk Op.'s «Find» button or Ctrl+F (Cmd+F on iPad/Mac). Typing filters at once; a song
+	// opens in FT2, a folder opens in Disk Op. Songs from Modland are downloaded and kept like before.
+	BT2.modlandMaterialize = (absFolder) => { // make the Modland folders down to absFolder exist (they are filled when listed)
+		const FS = Module.bt2FS;
+		if (!FS.analyzePath(BT2.MODLAND_ROOT).exists) FS.mkdir(BT2.MODLAND_ROOT);
+		let cur = BT2.MODLAND_ROOT;
+		BT2.fsReaddirHook(cur);
+		for (const part of absFolder.slice(BT2.MODLAND_ROOT.length + 1).split('/').filter(Boolean)) {
+			cur += '/' + part;
+			BT2.fsReaddirHook(cur);
+		}
+	};
+	BT2.search = (() => {
+		const SONG = /\.(xm|mod|s3m|it|stm|stk|nst|digi|bem|mtm|669|wow)$/i;
+		const SOUND = /\.(xi|xp|xt|wav|aiff?|iff|8svx|raw|flac|ogg|mp3|brr|pat|sf2)$/i;
+		const kindOf = (name) => SONG.test(name) ? 'song' : SOUND.test(name) ? 'sound' : 'other';
+		const S = { open: false, where: 'all', what: 'all', sel: 0, results: [], shown: 200, own: [], mod: null,
+			modLoading: false, timer: 0, words: [] };
+		const box = () => $('search');
+		const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' kB' : n ? n + ' B' : '';
+
+		const buildOwn = () => {
+			const FS = Module.bt2FS, items = [];
+			const walk = (abs, rel) => {
+				let names;
+				try { names = FS.readdir(abs); } catch (e) { return; }
+				for (const n of names) {
+					if (n === '.' || n === '..' || n[0] === '.') continue;
+					const p = abs + '/' + n, r = rel ? rel + '/' + n : n;
+					let st;
+					try { st = FS.stat(p); } catch (e) { continue; }
+					if (FS.isDir(st.mode)) {
+						items.push({ name: n, rel: r, dir: rel, abs: p, kind: 'folder', src: 'own' });
+						walk(p, r);
+					} else {
+						items.push({ name: n, rel: r, dir: rel, abs: p, kind: kindOf(n), size: st.size, src: 'own' });
+					}
+				}
+			};
+			walk(BT2.USER_ROOT, '');
+			for (const it of items) { it.low = it.rel.toLowerCase(); it.lowName = it.name.toLowerCase(); }
+			return items;
+		};
+		const buildModland = () => {
+			const items = [], folders = new Map();
+			for (const line of BT2.modland.lines.split('\n')) {
+				const t = line.indexOf('\t');
+				if (t <= 0) continue;
+				const rel = line.slice(t + 1), slash = rel.lastIndexOf('/');
+				const name = rel.slice(slash + 1);
+				items.push({ name, rel, dir: slash > 0 ? rel.slice(0, slash) : '', abs: BT2.MODLAND_ROOT + '/' + rel,
+					kind: kindOf(name) === 'other' ? 'song' : kindOf(name), size: +line.slice(0, t), src: 'modland' });
+				for (let d = slash > 0 ? rel.slice(0, slash) : ''; d; d = d.lastIndexOf('/') > 0 ? d.slice(0, d.lastIndexOf('/')) : '')
+					folders.set(d, (folders.get(d) || 0) + 1);
+			}
+			for (const [d, count] of folders) {
+				const s2 = d.lastIndexOf('/');
+				items.push({ name: d.slice(s2 + 1), rel: d, dir: s2 > 0 ? d.slice(0, s2) : '', abs: BT2.MODLAND_ROOT + '/' + d,
+					kind: 'folder', count, src: 'modland' });
+			}
+			for (const it of items) { it.low = it.rel.toLowerCase(); it.lowName = it.name.toLowerCase(); }
+			return items;
+		};
+		const ensureModland = () => {
+			if (S.mod || S.modLoading) return;
+			S.modLoading = true;
+			status();
+			BT2.modlandLoad().then((ok) => {
+				S.modLoading = false;
+				if (ok) { S.mod = buildModland(); run(); } else status('Fikk ikke hentet Modland-listen (ingen nett?).');
+			}).catch(() => { S.modLoading = false; status('Fikk ikke hentet Modland-listen (ingen nett?).'); });
+		};
+
+		const run = () => {
+			const words = $('searchInput').value.toLowerCase().split(/\s+/).filter(Boolean);
+			S.words = words;
+			const pools = [];
+			if (S.where !== 'modland') pools.push(S.own);
+			if (S.where !== 'own') {
+				if (S.mod) pools.push(S.mod);
+				else if (words.length || S.where === 'modland') ensureModland();
+			}
+			const res = [];
+			for (const pool of pools) {
+				for (const it of pool) {
+					if (S.what === 'all' ? it.kind === 'other' : it.kind !== S.what) continue;
+					let ok = true;
+					for (const w of words) if (!it.low.includes(w)) { ok = false; break; }
+					if (!ok) continue;
+					// best first: all words in the name itself, the name starting with the first word, folders, own files
+					let rank = 0;
+					for (const w of words) if (!it.lowName.includes(w)) { rank += 4; break; }
+					if (words.length && !it.lowName.startsWith(words[0])) rank += 2;
+					if (it.kind !== 'folder') rank += 1;
+					it.rank = rank + (it.src === 'own' ? 0 : 8) * (words.length ? 0 : 1);
+					res.push(it);
+				}
+			}
+			res.sort((a, b) => a.rank - b.rank || (a.src === b.src ? 0 : a.src === 'own' ? -1 : 1) || (a.low < b.low ? -1 : a.low > b.low ? 1 : 0));
+			S.results = res;
+			S.sel = 0;
+			S.shown = 200;
+			render();
+		};
+
+		const row = (it, i) => {
+			const r = document.createElement('div');
+			r.className = 'ft-row';
+			r.setAttribute('role', 'option');
+			r.dataset.i = i;
+			const kind = document.createElement('span');
+			kind.className = 'ft-kind';
+			kind.textContent = it.kind === 'folder' ? '/' : it.kind === 'song' ? '\u266A' : '\u223F';
+			const main = document.createElement('span');
+			main.className = 'ft-main';
+			const name = document.createElement('span');
+			name.className = 'ft-name';
+			name.textContent = it.kind === 'folder' ? '/' + it.name : it.name;
+			const path = document.createElement('span');
+			path.className = 'ft-path';
+			path.textContent = (it.src === 'own' ? 'BT2' : 'Modland') + (it.dir ? '/' + it.dir : '');
+			main.append(name, path);
+			const src = document.createElement('span');
+			src.className = 'ft-src';
+			src.textContent = (it.src === 'own' ? 'Mine' : 'Modland') + '\n' +
+				(it.kind === 'folder' ? (it.count ? it.count + ' sanger' : '') : fmtSize(it.size));
+			src.style.whiteSpace = 'pre';
+			r.append(kind, main, src);
+			if (it.kind !== 'folder') {
+				const b = document.createElement('button');
+				b.className = 'ft-btn ft-small';
+				b.textContent = 'Mappe';
+				b.title = 'Vis mappa i Disk Op.';
+				b.dataset.folder = '1';
+				r.append(b);
+			}
+			return r;
+		};
+		const render = () => {
+			const list = $('searchList');
+			list.textContent = '';
+			const frag = document.createDocumentFragment();
+			S.results.slice(0, S.shown).forEach((it, i) => frag.appendChild(row(it, i)));
+			if (S.results.length > S.shown) {
+				const more = document.createElement('button');
+				more.className = 'ft-btn';
+				more.style.margin = '8px 10px';
+				more.textContent = 'Vis flere (' + (S.results.length - S.shown) + ' til)';
+				more.dataset.more = '1';
+				frag.appendChild(more);
+			}
+			if (!S.results.length) {
+				const e = document.createElement('div');
+				e.className = 'ft-empty';
+				e.textContent = S.modLoading ? 'Henter Modland-listen …' : 'Ingen treff.';
+				frag.appendChild(e);
+			}
+			list.appendChild(frag);
+			highlight(false);
+			status();
+		};
+		const status = (msg) => {
+			const touch = navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches;
+			$('searchStatus').textContent = msg || ((S.results.length === 1 ? '1 treff' : S.results.length + ' treff') +
+				(S.modLoading ? ' · henter Modland-listen …' : (S.where !== 'own' && !S.mod ? ' · Modland: skriv noe for å søke der' : '')) +
+				(touch ? ' · trykk for å åpne' : ' · \u2191\u2193 velg · Enter åpne · Shift+Enter vis mappa · Esc lukk'));
+		};
+		const highlight = (scroll) => {
+			const rows = $('searchList').querySelectorAll('.ft-row');
+			rows.forEach((r) => r.classList.toggle('sel', +r.dataset.i === S.sel));
+			if (scroll && rows[S.sel]) rows[S.sel].scrollIntoView({ block: 'nearest' });
+		};
+		const move = (d) => {
+			const n = Math.min(S.results.length, S.shown);
+			if (!n) return;
+			S.sel = Math.max(0, Math.min(n - 1, S.sel + d));
+			highlight(true);
+		};
+		const syncButtons = () => {
+			box().querySelectorAll('[data-where]').forEach((b) => b.classList.toggle('on', b.dataset.where === S.where));
+			box().querySelectorAll('[data-what]').forEach((b) => b.classList.toggle('on', b.dataset.what === S.what));
+		};
+		const applyColors = () => {
+			const c = (i) => '#' + ((Module._webPaletteRGB(i) >>> 0) & 0xFFFFFF).toString(16).padStart(6, '0');
+			const st = box().style;
+			[['--ft-bg', 0], ['--ft-pattext', 1], ['--ft-blck', 2], ['--ft-blcktxt', 3], ['--ft-desk', 4], ['--ft-text', 5],
+				['--ft-btn', 6], ['--ft-btntext', 7], ['--ft-desk2', 8], ['--ft-desk1', 9], ['--ft-btn2', 10], ['--ft-btn1', 11]]
+				.forEach(([k, i]) => st.setProperty(k, c(i)));
+		};
+
+		const act = (it, showFolder) => {
+			if (!it) return;
+			const folderOf = (p) => p.slice(0, p.lastIndexOf('/'));
+			if (it.kind === 'folder' || showFolder) {
+				const folder = it.kind === 'folder' ? it.abs : folderOf(it.abs);
+				if (it.src === 'modland') BT2.modlandMaterialize(folder);
+				const item = it.kind === 'sound' ? (/\.xi$/i.test(it.name) ? 1 : 2) : (S.what === 'sound' ? 2 : 0);
+				Module.ccall('webDiskOpShowFolder', null, ['string', 'number'], [folder, item]);
+				close();
+				return;
+			}
+			if (it.src === 'modland') BT2.modlandMaterialize(folderOf(it.abs));
+			close();
+			Module.ccall('webLoadFile', null, ['string'], [it.abs]); // songs, instruments and samples (like dropping a file)
+		};
+
+		const open = () => {
+			if (!BT2.started || !Module.bt2FS || S.open) return;
+			S.open = true;
+			try { applyColors(); } catch (e) {}
+			S.own = buildOwn();
+			syncButtons();
+			box().classList.remove('hidden');
+			const inp = $('searchInput');
+			inp.focus();
+			inp.select();
+			run();
+		};
+		const close = () => {
+			if (!S.open) return;
+			S.open = false;
+			box().classList.add('hidden');
+			try { Module._webSyncModifiers(0); } catch (e) {} // (Ctrl from Ctrl+F must not stay "held" in FT2)
+			BT2.focusCanvas();
+		};
+		const onKey = (e) => {
+			if (e.type !== 'keydown') return;
+			if (e.key === 'Escape') { e.preventDefault(); close(); }
+			else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+			else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+			else if (e.key === 'PageDown') { e.preventDefault(); move(10); }
+			else if (e.key === 'PageUp') { e.preventDefault(); move(-10); }
+			else if (e.key === 'Enter') { e.preventDefault(); act(S.results[S.sel], e.shiftKey); }
+		};
+
+		// wiring
+		$('searchInput').addEventListener('input', () => { clearTimeout(S.timer); S.timer = setTimeout(run, 70); });
+		$('searchClose').addEventListener('click', close);
+		box().addEventListener('click', (e) => {
+			if (e.target === box()) { close(); return; } // tap outside the window
+			const b = e.target.closest('button');
+			if (b && b.dataset.where) { S.where = b.dataset.where; syncButtons(); run(); return; }
+			if (b && b.dataset.what) { S.what = b.dataset.what; syncButtons(); run(); return; }
+			if (b && b.dataset.more) { S.shown += 200; render(); return; }
+			const r = e.target.closest('.ft-row');
+			if (r) { S.sel = +r.dataset.i; act(S.results[S.sel], !!(b && b.dataset.folder)); }
+		});
+		return { open, close, onKey, isOpen: () => S.open, state: S, run };
+	})();
 	starfield.kick();
 	window.addEventListener('resize', () => starfield.kick());
 
@@ -1317,6 +1630,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 	const onKey = (e) => {
 		if (!e.isTrusted) return;
+		if (BT2.search.isOpen()) { // the search window has the keyboard (typing, arrows, Enter, Esc); FT2 gets nothing
+			BT2.search.onKey(e);
+			e.stopImmediatePropagation();
+			return;
+		}
 		if (!$('diag').classList.contains('hidden')) {
 			// sound test is open: show the key, don't let the program react to it
 			logKey(e);
@@ -1324,6 +1642,13 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			return;
 		}
 		if (!ready()) return;
+		if (e.type === 'keydown' && BT2.started && !overlayOpen() && (e.code === 'KeyF' || /^f$/i.test(e.key)) &&
+			(e.ctrlKey || (e.metaKey && BT2.isApple())) && !e.shiftKey && !e.altKey && Module._webIsEditingText() === 0) {
+			e.preventDefault(); // Ctrl+F / Cmd+F: the search window (FT2 itself has nothing on Ctrl+F)
+			e.stopImmediatePropagation();
+			BT2.search.open();
+			return;
+		}
 		if (!BT2.isApple() && (e.key === 'Meta' || e.key === 'OS' || /^(Meta|OS)(Left|Right)$/.test(e.code))) {
 			e.stopImmediatePropagation(); // the Windows key: nothing in FT2 (Windows uses it for the Start menu)
 			return;
@@ -1368,6 +1693,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	};
 	window.addEventListener('keydown', onKey, true);
 	window.addEventListener('keyup', onKey, true);
+	window.addEventListener('keypress', (e) => { if (BT2.search.isOpen()) e.stopImmediatePropagation(); }, true);
 	// modifier keys held while clicking/tapping (Shift/Ctrl/Alt + click is used in FT2)
 	window.addEventListener('pointerdown', (e) => { if (e.isTrusted && ready() && e.pointerType === 'mouse') Module._webSyncModifiers(modFlags(e)); }, true);
 
@@ -1459,7 +1785,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// no pinch-zoom, no scrolling, no long-press menus
 	['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault()));
 	document.addEventListener('touchmove', (e) => {
-		if (e.target && e.target.closest && e.target.closest('#start, #diag')) return; // these may scroll
+		if (e.target && e.target.closest && e.target.closest('#start, #diag, #search')) return; // these may scroll
 		e.preventDefault();
 	}, { passive: false });
 
@@ -1557,12 +1883,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// save files when the app goes to the background; wake the sound up again when it comes back
 	BT2.visibleSince = performance.now();
 	document.addEventListener('visibilitychange', () => {
-		if (document.hidden) { BT2.syncFiles(); return; }
+		if (document.hidden) { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); return; }
 		BT2.visibleSince = performance.now();
 		if (BT2.started && BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {});
 		BT2.starfield.kick();
 	});
-	window.addEventListener('pagehide', () => BT2.syncFiles());
+	window.addEventListener('pagehide', () => { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); });
 
 	// ask the browser to keep our files (not clear them when space is low)
 	try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}

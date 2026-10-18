@@ -52,6 +52,7 @@ bool webPrepareFile(const char *path); // download a library/Modland song before
 bool webDiskOpPrepareSaveDir(void); // before saving: never into the Modland library (kept in memory only)
 bool webDiskOpReadOnlyHere(void);   // true in the Modland library (no new folders, renaming or deleting there)
 void webDiskOpConfineDir(void);     // Disk Op. stays inside the user's folders and the Modland library
+void webHandlePageRequests(void);   // in the main loop: requests from the page (e.g. "show this folder" from the search window)
 
 // Modland (online library)
 #define WEB_MODLAND_ROOT "/Modland"

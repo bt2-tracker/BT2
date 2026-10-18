@@ -844,7 +844,73 @@ void webInit(void) // after the config has been loaded
 }
 
 static config_t lastSavedConfig;
-static uint32_t frameCounter;
+static uint32_t frameCounter, settingsCounter;
+
+// settings (colours, interpolation, Disk Op. folders ...): stored right after a change. Updates of the
+// app never touch them (they are the user's own file, FT2.CFG, in the browser's storage).
+static void saveSettingsIfChanged(void)
+{
+	webDiskOpStorePathsInConfig();
+	config.specialFlags2 |= HARDWARE_MOUSE;
+
+	if (memcmp(&lastSavedConfig, &config, sizeof (config_t)) != 0 && !editor.editTextFlag)
+	{
+		saveConfig(CONFIG_HIDE_ERRORS);
+		memcpy(&lastSavedConfig, &config, sizeof (config_t));
+	}
+}
+
+// from the page, when the app goes to the background or is closed
+EMSCRIPTEN_KEEPALIVE void webSaveSettingsNow(void)
+{
+	if (editor.mainLoopOngoing)
+		saveSettingsIfChanged();
+}
+
+// FT2's colours for the page's own windows (the search window looks like the rest of the program)
+EMSCRIPTEN_KEEPALIVE int32_t webPaletteRGB(int32_t index)
+{
+	if (index < 0 || index >= PAL_NUM)
+		return 0;
+
+	return (int32_t)(video.palette[index] & 0xFFFFFF);
+}
+
+// the search window: "show this folder in Disk Op." (done in the main loop, see webHandlePageRequests)
+static char pendingFolder[PATH_MAX];
+static int32_t pendingFolderItem = -1;
+
+EMSCRIPTEN_KEEPALIVE void webDiskOpShowFolder(const char *path, int32_t item)
+{
+	snprintf(pendingFolder, sizeof (pendingFolder), "%s", path);
+	pendingFolderItem = item;
+}
+
+void webHandlePageRequests(void)
+{
+	if (pendingFolder[0] == '\0' || ui.sysReqShown)
+		return;
+
+	if (!ui.diskOpShown)
+		showDiskOpScreen();
+
+	// the right kind of files (songs, instruments, samples), then the folder
+	if (pendingFolderItem >= 0 && pendingFolderItem != getDiskOpItem())
+	{
+		if (pendingFolderItem == DISKOP_ITEM_INSTR)
+			rbDiskOpInstr();
+		else if (pendingFolderItem == DISKOP_ITEM_SAMPLE)
+			rbDiskOpSample();
+		else
+			rbDiskOpModule();
+	}
+
+	if (chdir(pendingFolder) != 0)
+		bt2_toast("Fant ikke mappa");
+
+	editor.diskOpReadDir = true;
+	pendingFolder[0] = '\0';
+}
 
 void webAfterSetup(void)
 {
@@ -879,22 +945,19 @@ void webFrame(void)
 	// tell the page where the FT2 screen is (for the Import/Export buttons in Disk Op.)
 	bt2_frame(video.renderX, video.renderY, video.renderW, video.renderH, webDiskOpIsShown() ? 1 : 0, SCREEN_H);
 
-	// every ~3 seconds: remember Disk Op. folders, save config if it changed
+	// settings: about twice a second, check if they changed (then they are saved and stored at once)
+	if (++settingsCounter >= 30)
+	{
+		settingsCounter = 0;
+		saveSettingsIfChanged();
+	}
+
+	// every ~3 seconds: store anything that changed (files are also stored right after they are written)
 	if (++frameCounter >= 180)
 	{
 		frameCounter = 0;
-
-		webDiskOpStorePathsInConfig();
-		config.specialFlags2 |= HARDWARE_MOUSE;
-
-		if (memcmp(&lastSavedConfig, &config, sizeof (config_t)) != 0 && !editor.editTextFlag)
-		{
-			saveConfig(CONFIG_HIDE_ERRORS);
-			memcpy(&lastSavedConfig, &config, sizeof (config_t));
-		}
-
 		if (!editor.wavIsRendering) // (not while a WAV file is being written: it would be copied again and again)
-			bt2_syncIfChanged(); // (files are also stored right after they are written, see bt2_pre.js)
+			bt2_syncIfChanged();
 	}
 }
 
