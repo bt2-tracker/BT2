@@ -34,6 +34,7 @@
 #include "ft2_midi.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 
 static const uint8_t textCursorData[12] =
 {
@@ -206,6 +207,8 @@ void flipFrame(void)
 	else
 		SDL_RenderCopy(video.renderer, video.texture, NULL, NULL);
 
+	tkRender(video.renderer); // BerntTracker: on-screen keyboard below the FT2 screen
+
 	SDL_RenderPresent(video.renderer);
 
 	eraseSprites();
@@ -264,6 +267,93 @@ void showErrorMsgBox(const char *fmt, ...)
 #else
 	SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", strBuf, NULL);
 #endif
+}
+
+/* BerntTracker: window size. With the on-screen keyboard shown, the window gets the
+** "Retro 2" shape: the FT2 screen stretched to the keyboard's width, keyboard below it.
+*/
+static void getWindowModeSize(int32_t *w, int32_t *h)
+{
+	if (!tkIsEnabled())
+	{
+		*w = SCREEN_W * video.windowModeUpscaleFactor;
+		*h = SCREEN_H * video.windowModeUpscaleFactor;
+		return;
+	}
+
+	const double dTotalW = TK_W;
+	const double dTotalH = SCREEN_H + TK_H;
+	double dScale = video.windowModeUpscaleFactor;
+
+	// make sure it fits on the screen (leave room for the window title and the taskbar)
+	SDL_DisplayMode dm;
+	int32_t di = (video.window != NULL) ? SDL_GetWindowDisplayIndex(video.window) : 0;
+	if (di < 0)
+		di = 0;
+
+	if (SDL_GetDesktopDisplayMode(di, &dm) == 0)
+	{
+		const double dFitW = (dm.w * 0.98) / dTotalW;
+		const double dFitH = (dm.h - 100) / dTotalH;
+		const double dFit = (dFitW < dFitH) ? dFitW : dFitH;
+
+		if ((config.windowFlags & WINSIZE_AUTO) || dScale > dFit)
+			dScale = dFit;
+	}
+
+	if (dScale < 1.0)
+		dScale = 1.0;
+
+	*w = (int32_t)(dTotalW * dScale);
+	*h = (int32_t)(dTotalH * dScale);
+}
+
+// BerntTracker: places the FT2 screen and the on-screen keyboard inside the window
+static void updateTouchKeyboardLayout(void)
+{
+	int32_t cx = 0, cy = 0, cw = video.windowW, ch = video.windowH;
+
+	if (video.fullscreen && !(config.specialFlags2 & STRETCH_IMAGE))
+	{
+		// keep the shape, center it
+		const double dAspect = (double)TK_W / (SCREEN_H + TK_H);
+		if ((double)video.windowW / video.windowH > dAspect)
+		{
+			cw = (int32_t)(video.windowH * dAspect);
+			cx = (video.windowW - cw) / 2;
+		}
+		else
+		{
+			ch = (int32_t)(video.windowW / dAspect);
+			cy = (video.windowH - ch) / 2;
+		}
+	}
+
+	const int32_t screenH = (int32_t)(((int64_t)ch * SCREEN_H) / (SCREEN_H + TK_H));
+
+	video.renderX = cx;
+	video.renderY = cy;
+	video.renderW = cw;
+	video.renderH = screenH;
+
+	video.renderRect.x = (int32_t)floor(cx * video.dDpiZoomFactorX);
+	video.renderRect.y = (int32_t)floor(cy * video.dDpiZoomFactorY);
+	video.renderRect.w = (int32_t)floor(cw * video.dDpiZoomFactorX);
+	video.renderRect.h = (int32_t)floor(screenH * video.dDpiZoomFactorY);
+	video.useCustomRenderRect = true;
+
+	SDL_Rect kbWin, kbPix;
+	kbWin.x = cx;
+	kbWin.y = cy + screenH;
+	kbWin.w = cw;
+	kbWin.h = ch - screenH;
+
+	kbPix.x = video.renderRect.x;
+	kbPix.y = video.renderRect.y + video.renderRect.h;
+	kbPix.w = video.renderRect.w;
+	kbPix.h = (int32_t)floor((cy + ch) * video.dDpiZoomFactorY) - kbPix.y;
+
+	tkSetRects(&kbWin, &kbPix);
 }
 
 static void updateRenderSizeVars(void)
@@ -333,6 +423,9 @@ static void updateRenderSizeVars(void)
 		video.dDpiZoomFactorY = (double)heightInPixels / video.windowH;
 	}
 
+	if (tkIsEnabled())
+		updateTouchKeyboardLayout();
+
 	// "hardware mouse" calculations
 	video.mouseCursorUpscaleFactor = MIN(video.renderW / SCREEN_W, video.renderH / SCREEN_H);
 	createMouseCursors();
@@ -354,7 +447,10 @@ void leaveFullscreen(void)
 	SDL_Delay(15); // fixes possible issues
 
 	setWindowSizeFromConfig(false); // false = do not change actual window size, only update variables
-	SDL_SetWindowSize(video.window, SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor);
+
+	int32_t winW, winH;
+	getWindowModeSize(&winW, &winH);
+	SDL_SetWindowSize(video.window, winW, winH);
 
 	updateRenderSizeVars();
 	updateMouseScaling();
@@ -766,6 +862,8 @@ void renderLoopPins(void)
 
 void closeVideo(void)
 {
+	tkFree();
+
 	if (video.texture != NULL)
 	{
 		SDL_DestroyTexture(video.texture);
@@ -834,7 +932,9 @@ void setWindowSizeFromConfig(bool updateRenderer)
 
 	if (updateRenderer)
 	{
-		SDL_SetWindowSize(video.window, SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor);
+		int32_t winW, winH;
+		getWindowModeSize(&winW, &winH);
+		SDL_SetWindowSize(video.window, winW, winH);
 
 		if (oldUpscaleFactor != video.windowModeUpscaleFactor)
 			SDL_SetWindowPosition(video.window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
@@ -932,9 +1032,11 @@ bool setupWindow(void)
 	if (config.windowFlags & FORCE_VSYNC_OFF)
 		video.vsync60HzPresent = false;
 
+	int32_t winW, winH;
+	getWindowModeSize(&winW, &winH);
+
 	video.window = SDL_CreateWindow("", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-		SCREEN_W * video.windowModeUpscaleFactor, SCREEN_H * video.windowModeUpscaleFactor,
-		windowFlags);
+		winW, winH, windowFlags);
 
 	if (video.window == NULL)
 	{
@@ -996,6 +1098,12 @@ bool setupRenderer(void)
 
 	if (!setupSprites())
 		return false;
+
+	if (!tkInit(video.renderer)) // BerntTracker: on-screen keyboard
+	{
+		showErrorMsgBox("Couldn't create the on-screen keyboard:\n\"%s\"", SDL_GetError());
+		return false;
+	}
 
 	updateRenderSizeVars();
 	updateMouseScaling();

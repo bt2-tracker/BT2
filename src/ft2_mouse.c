@@ -21,6 +21,7 @@
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
 #include "ft2_keyboard.h"
+#include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 
 #define NUM_CURSORS 6
 
@@ -926,7 +927,7 @@ void readMouseXY(void)
 	mouse.x = (int32_t)floor(mx * video.dMouseXMul);
 	mouse.y = (int32_t)floor(my * video.dMouseYMul);
 
-	if (config.specialFlags2 & HARDWARE_MOUSE)
+	if ((config.specialFlags2 & HARDWARE_MOUSE) || tkMouseIsOverKeyboard()) // BerntTracker: no FT2 pointer over the keyboard
 	{
 		// hardware mouse mode (OS)
 		hideSprite(SPRITE_MOUSE_POINTER);

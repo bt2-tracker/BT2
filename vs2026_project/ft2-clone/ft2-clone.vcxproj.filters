@@ -34,6 +34,7 @@
     <ClCompile Include="..\..\src\ft2_sysreqs.c" />
     <ClCompile Include="..\..\src\ft2_tables.c" />
     <ClCompile Include="..\..\src\ft2_textboxes.c" />
+    <ClCompile Include="..\..\src\ft2_touchkeys.c" />
     <ClCompile Include="..\..\src\ft2_trim.c" />
     <ClCompile Include="..\..\src\ft2_unicode.c" />
     <ClCompile Include="..\..\src\ft2_video.c" />
@@ -250,6 +251,9 @@
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\ft2_textboxes.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\ft2_touchkeys.h">
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\ft2_trim.h">

@@ -32,6 +32,7 @@
 #include "ft2_sample_ed.h"
 #include "ft2_sample_ed_features.h"
 #include "ft2_structs.h"
+#include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 
 #define CRASH_TEXT "Oh no! The Fasttracker II clone has crashed...\nA backup of the song was hopefully " \
                    "saved to the current module directory.\n\nPlease report this bug if you can.\n" \
@@ -422,6 +423,10 @@ static void handleSDLEvents(void)
 		if (event.type == SDL_SYSWMEVENT)
 			handleSysMsg(event);
 #endif
+		// BerntTracker: clicks/touches on the on-screen keyboard
+		if (tkHandleEvent(&event))
+			continue;
+
 		// text input when editing texts
 		if (event.type == SDL_TEXTINPUT)
 		{

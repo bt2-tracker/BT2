@@ -26,6 +26,7 @@
 #include "ft2_sample_ed_features.h"
 #include "ft2_midi.h"
 #include "ft2_structs.h"
+#include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 
 keyb_t keyb; // globalized
 
@@ -75,6 +76,8 @@ void readKeyModifiers(void)
 #ifdef _WIN32
 	keyb.leftWinKeyDown = (modState & KMOD_LGUI) ? true : false;
 #endif
+
+	tkApplyModifiers(); // BerntTracker: sticky Shift/Ctrl/Alt on the on-screen keyboard
 }
 
 void keyUpHandler(SDL_Scancode scancode, SDL_Keycode keycode)
@@ -983,6 +986,11 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 			if (keyb.leftAltPressed)
 			{
 				jumpToChannel(15);
+				return true;
+			}
+			else if (keyb.leftCtrlPressed) // BerntTracker: show/hide on-screen keyboard
+			{
+				tkToggle();
 				return true;
 			}
 		}
