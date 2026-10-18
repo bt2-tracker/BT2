@@ -858,16 +858,16 @@ void updateWindowTitle(bool forceUpdate)
 		songTitleTrunc[sizeof (songTitleTrunc)-1] = '\0';
 
 			if (song.isModified)
-				sprintf(wndTitle, "Fasttracker II clone v%s - \"%s\" (unsaved)", PROG_VER_STR, songTitleTrunc);
+				sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"%s\" (unsaved)", PROG_VER_STR, songTitleTrunc);
 			else
-				sprintf(wndTitle, "Fasttracker II clone v%s - \"%s\"", PROG_VER_STR, songTitleTrunc);
+				sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"%s\"", PROG_VER_STR, songTitleTrunc);
 	}
 	else
 	{
 		if (song.isModified)
-			sprintf(wndTitle, "Fasttracker II clone v%s - \"untitled\" (unsaved)", PROG_VER_STR);
+			sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"untitled\" (unsaved)", PROG_VER_STR);
 		else
-			sprintf(wndTitle, "Fasttracker II clone v%s - \"untitled\"", PROG_VER_STR);
+			sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"untitled\"", PROG_VER_STR);
 	}
 
 	SDL_SetWindowTitle(video.window, wndTitle);
