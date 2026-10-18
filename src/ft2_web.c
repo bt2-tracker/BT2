@@ -1,11 +1,10 @@
 // BerntTracker: web (browser) version glue. Only compiled with Emscripten.
 //
-// Two audio modes:
-//  BT2_WEB_WORKLET defined: FT2's mixer runs directly on the browser's audio thread
-//                           (Wasm AudioWorklet, 128 samples per block = lowest latency).
-//                           Needs a "cross-origin isolated" page (SharedArrayBuffer).
-//  otherwise ("compat"):    the mixer runs on the main thread and small blocks are queued
-//                           to a plain AudioWorklet. Works everywhere, a bit more latency.
+// Two builds:
+//  BT2_WEB_WORKLET defined: can also run FT2's mixer on the browser's audio thread
+//                           (needs a "cross-origin isolated" page / SharedArrayBuffer).
+//  otherwise:               the mixer always runs on the main thread.
+// See "audio" below for the three sound engines.
 
 #ifdef __EMSCRIPTEN__
 
@@ -89,10 +88,31 @@ bool webIsTouchDevice(void)
 
 // ------------------------------------------------------------------------------------------------
 // audio
+//
+// Three "engines" (chosen in the sound test, remembered in the browser, switched without reloading):
+//  0 = worklet: FT2's mixer runs on the browser's audio thread (Wasm AudioWorklet, needs isolation)
+//  1 = compat:  the mixer runs on the main thread, small blocks are queued to a plain AudioWorklet
+//  2 = SP:      the mixer runs on the main thread inside a ScriptProcessorNode
+// All of them use the same AudioContext, so the sample rate never changes when switching.
+
+#define CHUNK_MAX 1024
 
 static SDL_AudioCallback audioCb;
 static uint32_t audioRate = 48000;
 static uint64_t perfFreq = 1000000;
+static volatile int32_t audioMode = 1;
+static volatile int32_t audioIsPaused = 1;
+static int32_t mainLockDepth;
+static float chunkBuffer[CHUNK_MAX * 2];
+static bool engineAttached;
+
+EM_JS(int32_t, bt2_wantedEngine, (int32_t hasWorklet), {
+	return globalThis.BT2.wantedEngineCode(hasWorklet);
+});
+
+EM_JS(int32_t, bt2_engineLatencyFrames, (void), {
+	return globalThis.BT2.engineLatencyFrames();
+});
 
 #ifdef BT2_WEB_WORKLET
 
@@ -100,13 +120,16 @@ static uint64_t perfFreq = 1000000;
 
 static EMSCRIPTEN_WEBAUDIO_T audioCtx;
 static volatile int32_t audioLockState; // 0 = free, 1 = main thread, 2 = audio thread
-static int32_t mainLockDepth;
-static volatile int32_t audioIsPaused = 1, audioReady, audioFailed;
+static volatile int32_t audioReady, audioFailed, workletStarted;
 static float interleaved[QUANTUM * 2];
 static volatile uint64_t framesRendered;
 static volatile uint32_t anchorSeq;
 static volatile uint64_t anchorCounter, anchorFrames;
 static uint8_t audioThreadStack[512 * 1024] __attribute__((aligned(16)));
+
+EM_ASYNC_JS(int32_t, bt2_attachEngine, (int32_t ctxHandle, int32_t mode), {
+	return await globalThis.BT2.openEngine(emscriptenGetAudioObject(ctxHandle), mode);
+});
 
 static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int numOutputs, AudioSampleFrame *outputs,
 	int numParams, const AudioParamFrame *params, void *userData)
@@ -120,7 +143,8 @@ static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int n
 	float *outR = outputs[0].data + QUANTUM;
 
 	int32_t expected = 0;
-	if (!audioIsPaused && __atomic_compare_exchange_n(&audioLockState, &expected, 2, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+	if (audioMode == 0 && !audioIsPaused &&
+		__atomic_compare_exchange_n(&audioLockState, &expected, 2, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 	{
 		audioCb(NULL, (Uint8 *)interleaved, QUANTUM * 2 * sizeof (float));
 		__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
@@ -141,8 +165,12 @@ static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int n
 	return EM_TRUE;
 }
 
-uint64_t webAudioPerfCounter(void) // runs on the audio thread (no performance.now() there)
+uint64_t webAudioPerfCounter(void)
 {
+	if (audioMode != 0)
+		return SDL_GetPerformanceCounter(); // main-thread engines
+
+	// worklet engine: runs on the audio thread (no performance.now() there)
 	uint32_t seq;
 	uint64_t counter, frames;
 	do
@@ -165,12 +193,22 @@ static void updateAudioClockAnchor(void) // main thread, once per frame
 	__atomic_add_fetch(&anchorSeq, 1, __ATOMIC_ACQ_REL);
 }
 
+static void workletDone(int32_t ok)
+{
+	if (ok)
+		audioReady = 1;
+	else
+		audioFailed = 1;
+
+	EM_ASM({ if (globalThis.BT2.onWorkletReady) globalThis.BT2.onWorkletReady(); });
+}
+
 static void onProcessorCreated(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, void *userData)
 {
 	(void)userData;
 	if (!success)
 	{
-		audioFailed = 1;
+		workletDone(0);
 		return;
 	}
 
@@ -181,14 +219,8 @@ static void onProcessorCreated(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, void 
 	options.outputChannelCounts = outputChannelCounts;
 
 	EMSCRIPTEN_AUDIO_WORKLET_NODE_T node = emscripten_create_wasm_audio_worklet_node(ctx, "bt2-mixer", &options, processAudio, NULL);
-	EM_ASM({
-		var ctx = emscriptenGetAudioObject($0);
-		var node = emscriptenGetAudioObject($1);
-		node.connect(ctx.destination);
-		globalThis.BT2.audioStarted(ctx, 'worklet', node);
-	}, ctx, node);
-
-	audioReady = 1;
+	EM_ASM({ globalThis.BT2.workletNode = emscriptenGetAudioObject($0); }, node);
+	workletDone(1);
 }
 
 static void onAudioThreadStarted(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, void *userData)
@@ -196,7 +228,7 @@ static void onAudioThreadStarted(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, voi
 	(void)userData;
 	if (!success)
 	{
-		audioFailed = 1;
+		workletDone(0);
 		return;
 	}
 
@@ -206,63 +238,17 @@ static void onAudioThreadStarted(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, voi
 	emscripten_create_wasm_audio_worklet_processor_async(ctx, &opts, onProcessorCreated, NULL);
 }
 
-SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have)
+EMSCRIPTEN_KEEPALIVE void webStartWorkletThread(void) // called from JS when switching to the worklet engine
 {
-	static bool contextCreated;
-
-	audioCb = callback;
-	perfFreq = SDL_GetPerformanceFrequency();
-	*have = *want;
-
-	if (!contextCreated) // one AudioContext + audio thread for the whole session
+	if (workletStarted || audioCtx == 0)
 	{
-		EmscriptenWebAudioCreateAttributes attr;
-		attr.latencyHint = "interactive";
-		attr.sampleRate = 0; // use the device's own rate (no resampling = less latency)
-		audioCtx = emscripten_create_audio_context(&attr);
-		if (audioCtx == 0)
-			return 0;
-
-		audioRate = (uint32_t)EM_ASM_INT({ return emscriptenGetAudioObject($0).sampleRate; }, audioCtx);
-		emscripten_start_wasm_audio_worklet_thread_async(audioCtx, audioThreadStack, sizeof (audioThreadStack), onAudioThreadStarted, NULL);
-
-		for (int32_t i = 0; i < 1000 && !audioReady && !audioFailed; i++)
-			emscripten_sleep(10);
-
-		if (!audioReady)
-			return 0;
-
-		contextCreated = true;
+		if (audioReady || audioFailed)
+			EM_ASM({ if (globalThis.BT2.onWorkletReady) globalThis.BT2.onWorkletReady(); });
+		return;
 	}
 
-	// total output latency estimate (one block + what the browser reports), used for visual sync
-	const int32_t latencyFrames = EM_ASM_INT({
-		var ctx = emscriptenGetAudioObject($0);
-		var l = (ctx.baseLatency || 0) + (ctx.outputLatency || 0);
-		if (!(l > 0)) l = 256 / ctx.sampleRate;
-		return Math.round(l * ctx.sampleRate);
-	}, audioCtx);
-
-	have->freq = (int)audioRate;
-	have->format = AUDIO_F32;
-	have->channels = 2;
-	have->samples = (Uint16)(QUANTUM + latencyFrames);
-
-	audioIsPaused = 1;
-	return 1;
-}
-
-void webAudioClose(void)
-{
-	audioIsPaused = 1; // the context and audio thread are kept for the next open
-}
-
-void webAudioPause(bool pause)
-{
-	if (!pause)
-		updateAudioClockAnchor();
-
-	audioIsPaused = pause ? 1 : 0;
+	workletStarted = 1;
+	emscripten_start_wasm_audio_worklet_thread_async(audioCtx, audioThreadStack, sizeof (audioThreadStack), onAudioThreadStarted, NULL);
 }
 
 void webAudioLock(void)
@@ -281,68 +267,49 @@ void webAudioUnlock(void)
 		__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
 }
 
-#else // compat audio: mixer on the main thread, blocks queued to a JS AudioWorklet
-
-#define CHUNK_MAX 1024
-
-static bool audioIsPaused = true;
-static int32_t mainLockDepth;
-static float chunkBuffer[CHUNK_MAX * 2];
-
-EMSCRIPTEN_KEEPALIVE float *webAudioRenderChunk(int32_t frames) // called from JS
+static int32_t openEngine(void) // first open: create the AudioContext and attach the wanted engine
 {
-	if (frames > CHUNK_MAX)
-		frames = CHUNK_MAX;
+	EmscriptenWebAudioCreateAttributes attr;
+	attr.latencyHint = "interactive";
+	attr.sampleRate = 0; // use the device's own rate (no resampling = less latency)
+	audioCtx = emscripten_create_audio_context(&attr);
+	if (audioCtx == 0)
+		return 0;
 
-	if (audioIsPaused || mainLockDepth > 0 || audioCb == NULL)
-		memset(chunkBuffer, 0, frames * 2 * sizeof (float));
-	else
-		audioCb(NULL, (Uint8 *)chunkBuffer, frames * 2 * sizeof (float));
+	int32_t mode = bt2_wantedEngine(1);
+	if (mode == 0)
+	{
+		webStartWorkletThread();
+		for (int32_t i = 0; i < 1000 && !audioReady && !audioFailed; i++)
+			emscripten_sleep(10);
 
-	return chunkBuffer;
+		if (!audioReady)
+			mode = 1; // fall back to the compat engine
+	}
+
+	audioMode = mode;
+	if (mode == 0)
+		updateAudioClockAnchor();
+
+	return bt2_attachEngine(audioCtx, mode);
 }
 
-EM_ASYNC_JS(int32_t, bt2_openCompatAudio, (void), {
-	return await globalThis.BT2.openCompatAudio();
-});
+#else // build without the audio thread (pages that are not "cross-origin isolated")
 
-EM_JS(int32_t, bt2_compatLatencyFrames, (void), {
-	return globalThis.BT2.compatLatencyFrames();
+EM_ASYNC_JS(int32_t, bt2_attachEngine, (int32_t ctxHandle, int32_t mode), {
+	return await globalThis.BT2.openEngine(null, mode);
 });
 
 uint64_t webAudioPerfCounter(void)
 {
-	return SDL_GetPerformanceCounter(); // the mixer runs on the main thread here
+	return SDL_GetPerformanceCounter(); // the mixer always runs on the main thread here
 }
 
-SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have)
+static void updateAudioClockAnchor(void) { }
+
+EMSCRIPTEN_KEEPALIVE void webStartWorkletThread(void)
 {
-	audioCb = callback;
-	perfFreq = SDL_GetPerformanceFrequency();
-	*have = *want;
-
-	const int32_t rate = bt2_openCompatAudio();
-	if (rate <= 0)
-		return 0;
-
-	audioRate = (uint32_t)rate;
-	have->freq = rate;
-	have->format = AUDIO_F32;
-	have->channels = 2;
-	have->samples = (Uint16)bt2_compatLatencyFrames();
-
-	audioIsPaused = true;
-	return 1;
-}
-
-void webAudioClose(void)
-{
-	audioIsPaused = true;
-}
-
-void webAudioPause(bool pause)
-{
-	audioIsPaused = pause;
+	EM_ASM({ if (globalThis.BT2.onWorkletReady) globalThis.BT2.onWorkletReady(); });
 }
 
 void webAudioLock(void)
@@ -356,7 +323,79 @@ void webAudioUnlock(void)
 		mainLockDepth--;
 }
 
+static int32_t openEngine(void)
+{
+	int32_t mode = bt2_wantedEngine(0);
+	if (mode == 0)
+		mode = 1;
+
+	audioMode = mode;
+	return bt2_attachEngine(0, mode);
+}
+
 #endif
+
+// main-thread engines (compat and SP) call this from JS for every block
+EMSCRIPTEN_KEEPALIVE float *webAudioRenderChunk(int32_t frames)
+{
+	if (frames > CHUNK_MAX)
+		frames = CHUNK_MAX;
+
+	if (audioMode == 0 || audioIsPaused || mainLockDepth > 0 || audioCb == NULL)
+		memset(chunkBuffer, 0, frames * 2 * sizeof (float));
+	else
+		audioCb(NULL, (Uint8 *)chunkBuffer, frames * 2 * sizeof (float));
+
+	return chunkBuffer;
+}
+
+// called from JS when the user picks another engine (the JS side swaps the audio nodes right after)
+EMSCRIPTEN_KEEPALIVE void webSetAudioMode(int32_t mode)
+{
+	webAudioLock();
+	audioMode = mode;
+	if (mode == 0)
+		updateAudioClockAnchor();
+	webAudioUnlock();
+}
+
+SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have)
+{
+	audioCb = callback;
+	perfFreq = SDL_GetPerformanceFrequency();
+	*have = *want;
+
+	if (!engineAttached) // one AudioContext for the whole session
+	{
+		const int32_t rate = openEngine();
+		if (rate <= 0)
+			return 0;
+
+		audioRate = (uint32_t)rate;
+		engineAttached = true;
+	}
+
+	have->freq = (int)audioRate;
+	have->format = AUDIO_F32;
+	have->channels = 2;
+	have->samples = (Uint16)bt2_engineLatencyFrames(); // used to line up the scopes/pattern with the sound
+
+	audioIsPaused = 1;
+	return 1;
+}
+
+void webAudioClose(void)
+{
+	audioIsPaused = 1; // the context is kept for the next open
+}
+
+void webAudioPause(bool pause)
+{
+	if (!pause && audioMode == 0)
+		updateAudioClockAnchor();
+
+	audioIsPaused = pause ? 1 : 0;
+}
 
 // ------------------------------------------------------------------------------------------------
 // files
@@ -451,9 +490,8 @@ EM_JS(void, bt2_frame, (int32_t rx, int32_t ry, int32_t rw, int32_t rh, int32_t 
 
 void webFrame(void)
 {
-#ifdef BT2_WEB_WORKLET
-	updateAudioClockAnchor();
-#endif
+	if (audioMode == 0)
+		updateAudioClockAnchor();
 
 	webScopesTick();
 
