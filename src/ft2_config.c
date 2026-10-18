@@ -213,14 +213,21 @@ static void setDefaultConfigSettings(void)
 	memcpy(configBuffer, defConfigData, CONFIG_FILE_SIZE);
 
 	/* BerntTracker: defaults closer to the original DOS Fasttracker II:
-	** "Blues" palette, 2-point linear interpolation (like FT2/GUS), volume ramping on (FT2.08+), 44.1kHz.
+	** "Blues" palette, 2-point linear interpolation (like FT2/GUS), volume ramping on (FT2.08+),
+	** "Original FT2 pattern layout". Output rate stays at ft2-clone's default (48kHz).
+	** Only used when there are no saved settings yet (or after "Reset config").
 	*/
 	config_t tmp;
 	memcpy(&tmp, configBuffer, CONFIG_FILE_SIZE);
 	tmp.cfg_StdPalNum = PAL_BLUES;
 	tmp.interpolation = INTERPOLATION_LINEAR;
 	tmp.specialFlags &= ~NO_VOLRAMP_FLAG;
-	tmp.audioFreq = 44100;
+	tmp.ptnAlternativeLayout = 0;
+#ifdef __EMSCRIPTEN__
+	// "Smaller latency": the browser sound engines find the smallest buffer that works on the device
+	tmp.specialFlags &= ~(BUFFSIZE_1024 + BUFFSIZE_2048);
+	tmp.specialFlags |= BUFFSIZE_512;
+#endif
 	memcpy(configBuffer, &tmp, CONFIG_FILE_SIZE);
 
 	loadConfigFromBuffer(true);

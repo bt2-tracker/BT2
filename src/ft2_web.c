@@ -108,8 +108,10 @@ static uint32_t audioRate = 48000;
 static uint64_t perfFreq = 1000000;
 static volatile int32_t audioMode = 1;
 static volatile int32_t audioIsPaused = 1;
+static volatile int32_t audioIs16Bit; // FT2's "16-bit" setting: the mixer makes 16-bit samples, turned into floats here
 static int32_t mainLockDepth;
 static float chunkBuffer[CHUNK_MAX * 2];
+static int16_t chunkBuffer16[CHUNK_MAX * 2];
 static bool engineAttached;
 
 EM_JS(int32_t, bt2_wantedEngine, (int32_t hasWorklet), {
@@ -120,6 +122,27 @@ EM_JS(int32_t, bt2_engineLatencyFrames, (void), {
 	return globalThis.BT2.engineLatencyFrames();
 });
 
+// FT2's "Smaller/Medium/Bigger latency" (Config > Audio): the smallest queue for the main-thread engines
+EM_JS(void, bt2_setLatencyChoice, (int32_t samples), {
+	globalThis.BT2.setLatencyChoice(samples);
+});
+
+// run FT2's mixer for one block, always giving floats to the browser
+static void runMixer(float *out, int16_t *out16, int32_t frames)
+{
+	if (audioIs16Bit)
+	{
+		// 16-bit: FT2 rounds the mix to 16 bits (with a little dither), like a 16-bit sound card
+		audioCb(NULL, (Uint8 *)out16, frames * 2 * sizeof (int16_t));
+		for (int32_t i = 0; i < frames * 2; i++)
+			out[i] = (float)out16[i] * (1.0f / 32768.0f);
+	}
+	else
+	{
+		audioCb(NULL, (Uint8 *)out, frames * 2 * sizeof (float));
+	}
+}
+
 #ifdef BT2_WEB_WORKLET
 
 #define QUANTUM 128
@@ -128,7 +151,48 @@ static EMSCRIPTEN_WEBAUDIO_T audioCtx;
 static volatile int32_t audioLockState; // 0 = free, 1 = main thread, 2 = audio thread
 static volatile int32_t audioReady, audioFailed, workletStarted, audioThreadDead;
 static float interleaved[QUANTUM * 2];
+static int16_t interleaved16[QUANTUM * 2];
 static volatile uint64_t framesRendered;
+static volatile uint32_t audioGaps; // blocks the mixer could not fill (shown in the sound test)
+
+// audio thread only: smooth over gaps in the sound (no hard jump to silence and back = no click)
+#define DECLICK_FADE_IN 64
+#define LOCK_SPIN_LONG 100000 // a fraction of a millisecond
+#define LOCK_SPIN_SHORT 1000
+static float lastOutL, lastOutR;
+static int32_t fadeInLeft, lockSpinLimit = LOCK_SPIN_LONG;
+
+static void soundGapFadeOut(float *outL, float *outR)
+{
+	// nothing to play this time: let the last sample fade away instead of dropping to zero at once
+	float l = lastOutL, r = lastOutR;
+	for (int32_t i = 0; i < QUANTUM; i++)
+	{
+		l *= 0.98f;
+		r *= 0.98f;
+		outL[i] = l;
+		outR[i] = r;
+	}
+
+	if (l > -1e-6f && l < 1e-6f) l = 0.0f;
+	if (r > -1e-6f && r < 1e-6f) r = 0.0f;
+	lastOutL = l;
+	lastOutR = r;
+	fadeInLeft = DECLICK_FADE_IN; // and fade in when the sound comes back
+}
+
+static void soundGapFadeIn(float *outL, float *outR)
+{
+	for (int32_t i = 0; i < QUANTUM && fadeInLeft > 0; i++, fadeInLeft--)
+	{
+		const float g = 1.0f - (float)fadeInLeft * (1.0f / DECLICK_FADE_IN);
+		outL[i] *= g;
+		outR[i] *= g;
+	}
+
+	lastOutL = outL[QUANTUM-1];
+	lastOutR = outR[QUANTUM-1];
+}
 static volatile uint32_t anchorSeq;
 static volatile uint64_t anchorCounter, anchorFrames;
 static uint8_t audioThreadStack[512 * 1024] __attribute__((aligned(16)));
@@ -149,17 +213,34 @@ static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int n
 	float *outR = outputs[0].data + QUANTUM;
 
 	bool mixed = false;
-	int32_t expected = 0;
-	if (audioMode == 0 && !audioIsPaused && !audioThreadDead &&
-		__atomic_compare_exchange_n(&audioLockState, &expected, 2, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+	if (audioMode == 0 && !audioIsPaused && !audioThreadDead)
 	{
-		// check again now that we hold the lock (the main thread may have paused/switched in between)
-		if (audioMode == 0 && !audioIsPaused && audioCb != NULL)
+		/* The main thread holds the lock only for a moment (a note from the keyboard, an edit).
+		** Wait for it a little instead of leaving a hole in the sound, which is heard as a click.
+		** If it keeps it for long (loading, big sample edits: FT2 goes quiet then too), give up soon.
+		*/
+		for (int32_t spins = 0; spins < lockSpinLimit; spins++)
 		{
-			audioCb(NULL, (Uint8 *)interleaved, QUANTUM * 2 * sizeof (float));
-			mixed = true;
+			if (__atomic_load_n(&audioLockState, __ATOMIC_RELAXED) != 0)
+				continue;
+
+			int32_t expected = 0;
+			if (__atomic_compare_exchange_n(&audioLockState, &expected, 2, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+			{
+				// check again now that we hold the lock (the main thread may have paused/switched in between)
+				if (audioMode == 0 && !audioIsPaused && audioCb != NULL)
+				{
+					runMixer(interleaved, interleaved16, QUANTUM);
+					mixed = true;
+				}
+				__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
+				break;
+			}
 		}
-		__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
+
+		lockSpinLimit = mixed ? LOCK_SPIN_LONG : LOCK_SPIN_SHORT;
+		if (!mixed && audioMode == 0 && !audioIsPaused)
+			__atomic_add_fetch(&audioGaps, 1, __ATOMIC_RELAXED);
 	}
 
 	if (mixed)
@@ -169,11 +250,11 @@ static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int n
 			outL[i] = interleaved[(i << 1) + 0];
 			outR[i] = interleaved[(i << 1) + 1];
 		}
+		soundGapFadeIn(outL, outR);
 	}
 	else
 	{
-		memset(outL, 0, QUANTUM * sizeof (float));
-		memset(outR, 0, QUANTUM * sizeof (float));
+		soundGapFadeOut(outL, outR);
 	}
 
 	__atomic_add_fetch(&framesRendered, QUANTUM, __ATOMIC_SEQ_CST);
@@ -392,9 +473,25 @@ EMSCRIPTEN_KEEPALIVE float *webAudioRenderChunk(int32_t frames)
 	if (audioMode == 0 || audioIsPaused || mainLockDepth > 0 || audioCb == NULL)
 		memset(chunkBuffer, 0, frames * 2 * sizeof (float));
 	else
-		audioCb(NULL, (Uint8 *)chunkBuffer, frames * 2 * sizeof (float));
+		runMixer(chunkBuffer, chunkBuffer16, frames);
 
 	return chunkBuffer;
+}
+
+// for the compat engine's queue size (it only gets smaller while a song plays, when the program is busiest)
+EMSCRIPTEN_KEEPALIVE int32_t webSongIsPlaying(void)
+{
+	return songPlaying ? 1 : 0;
+}
+
+// for the sound test: how many times the low-latency engine had to leave a gap in the sound
+EMSCRIPTEN_KEEPALIVE uint32_t webAudioGaps(void)
+{
+#ifdef BT2_WEB_WORKLET
+	return __atomic_load_n(&audioGaps, __ATOMIC_RELAXED);
+#else
+	return 0;
+#endif
 }
 
 // called from JS when the engine's delay changes (engine switch, compat queue size), for the visual sync
@@ -429,8 +526,16 @@ SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *
 		engineAttached = true;
 	}
 
-	have->freq = (int)audioRate;
-	have->format = AUDIO_F32;
+	// FT2's bit depth setting: 16-bit (the mixer rounds to 16 bits, turned into floats for the browser) or 32-bit
+	webAudioLock();
+	audioIs16Bit = (want->format == AUDIO_S16) ? 1 : 0;
+	webAudioUnlock();
+
+	// FT2's latency setting: the smallest queue for the main-thread engines (the low-latency engine has none)
+	bt2_setLatencyChoice(want->samples);
+
+	have->freq = (int)audioRate; // always the device's own rate (no resampling = less delay)
+	have->format = audioIs16Bit ? AUDIO_S16 : AUDIO_F32;
 	have->channels = 2;
 	have->samples = (Uint16)bt2_engineLatencyFrames(); // used to line up the scopes/pattern with the sound
 
@@ -603,7 +708,8 @@ EMSCRIPTEN_KEEPALIVE const char *webDebugState(void)
 		"\"advEdit\":%d,\"transp\":%d,\"trim\":%d,\"instExt\":%d,\"smpExt\":%d,\"cfgScreen\":%d,"
 		"\"jump\":[%d,%d,%d,%d],\"markX1\":%d,\"markX2\":%d,\"markY1\":%d,\"markY2\":%d,"
 		"\"masterVol\":%d,\"bankOffset\":%d,\"bankSwapped\":%d,\"songLen\":%d,\"pattNum\":%d,\"muted0\":%d,"
-		"\"wavShown\":%d,\"wavRendering\":%d}",
+		"\"wavShown\":%d,\"wavRendering\":%d,"
+		"\"ptnAltLayout\":%d,\"bits16\":%d,\"bufSize\":%d,\"audioFreq\":%d,\"interp\":%d,\"volRamp\":%d,\"boost\":%d,\"haveFreq\":%d}",
 		row, ch, cursor.object, patt, (patt >= 0 && patt < MAX_PATTERNS) ? patternNumRows[patt] : 0, song.songPos, playMode,
 		songPlaying ? 1 : 0, editor.curOctave, editor.editRowSkip, editor.curInstr, n.note, n.instr, n.vol, n.efx, n.efxData,
 		keyb.leftCtrlPressed, keyb.leftAltPressed, keyb.leftShiftPressed, (int32_t)mod, editor.editTextFlag, ui.sysReqShown,
@@ -613,7 +719,11 @@ EMSCRIPTEN_KEEPALIVE const char *webDebugState(void)
 		editor.currConfigScreen, editor.ptnJumpPos[0], editor.ptnJumpPos[1], editor.ptnJumpPos[2], editor.ptnJumpPos[3],
 		pattMark.markX1, pattMark.markX2, pattMark.markY1, pattMark.markY2, config.masterVol, editor.instrBankOffset,
 		editor.instrBankSwapped, song.songLength, song.pattNum, editor.channelMuted[0],
-		ui.wavRendererShown, editor.wavIsRendering);
+		ui.wavRendererShown, editor.wavIsRendering,
+		config.ptnAlternativeLayout, (config.specialFlags & BITDEPTH_16) ? 1 : 0,
+		(config.specialFlags & BUFFSIZE_512) ? 512 : (config.specialFlags & BUFFSIZE_2048) ? 2048 : 1024,
+		(int32_t)config.audioFreq, config.interpolation, (config.specialFlags & NO_VOLRAMP_FLAG) ? 0 : 1,
+		config.boostLevel, (int32_t)audio.haveFreq);
 
 	return buf;
 }

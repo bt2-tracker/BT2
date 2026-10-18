@@ -30,6 +30,7 @@ static uint32_t oldAudioFreq, tickTimeLenInt, randSeed = INITIAL_DITHER_SEED;
 static uint64_t tickTimeLenFrac;
 static float fSqrtPanningTable[256+1], fAudioNormalizeMul, fPrngStateL, fPrngStateR;
 static voice_t voice[MAX_CHANNELS * 2];
+static bool jamRampActive[MAX_CHANNELS]; // BerntTracker: voice ramp started in the middle of a tick (see audioCallback)
 
 // globalized
 audio_t audio;
@@ -325,6 +326,18 @@ void resetRampVolumes(void)
 	voice_t *v = voice;
 	for (int32_t i = 0; i < song.numChannels; i++, v++)
 	{
+		/* BerntTracker: a note played from the keyboard starts in the middle of a tick (see audioCallback),
+		** so its 5ms fade-in (or fade-out at key-off) can still be running when the next tick starts.
+		** Jumping straight to the target volume here would cut the ramp short and make a click, so
+		** let it finish. (In FT2 notes only start at a tick, and ramps always end before the next one.)
+		*/
+		if (jamRampActive[i])
+		{
+			jamRampActive[i] = false;
+			if (v->volumeRampLength > 0)
+				continue;
+		}
+
 		v->fCurrVolumeL = v->fTargetVolumeL;
 		v->fCurrVolumeR = v->fTargetVolumeR;
 		v->volumeRampLength = 0;
@@ -912,7 +925,11 @@ static void audioCallback(void *userdata, Uint8 *stream, int len)
 		updateVoices();
 
 		for (int32_t i = 0; i < song.numChannels; i++)
+		{
 			channel[i].jamStatus |= jamStatus[i]; // so scopes etc. still see the note at the next tick
+			if (jamStatus[i] != 0)
+				jamRampActive[i] = true; // its volume ramp started mid-tick: let it finish (see resetRampVolumes)
+		}
 	}
 
 	int32_t bufferPosition = 0;
@@ -1062,8 +1079,7 @@ bool setupAudio(bool showErrorMsg)
 
 #ifdef __EMSCRIPTEN__
 	(void)device;
-	want.format = AUDIO_F32;
-	audio.dev = webAudioOpen(audioCallback, &want, &have); // BerntTracker: low-latency browser audio
+	audio.dev = webAudioOpen(audioCallback, &want, &have); // BerntTracker: low-latency browser audio (16-bit or 32-bit, as in FT2)
 	if (audio.dev == 0)
 	{
 #else

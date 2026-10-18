@@ -241,7 +241,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.15';
+	const BT2_VERSION = '0.16';
 	const BT2_DATE = '18.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -262,9 +262,10 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		// screen refresh, so notes start as fast as possible.
 		wake: null,
 		waitFrame() {
+			BT2.pump(); // compat engine: top the sound queue up right after the program's frame ...
 			return new Promise((resolve) => {
 				let done = false;
-				const finish = () => { if (!done) { done = true; BT2.wake = null; resolve(); } };
+				const finish = () => { if (!done) { done = true; BT2.wake = null; BT2.pump(); resolve(); } }; // ... and right before the next
 				BT2.wake = finish;
 				const tick = (t) => {
 					if (done) return;
@@ -377,6 +378,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 				node.connect(ctx.destination);
 				BT2.node = node;
 				BT2.audioMode = name;
+				BT2.settleUntil = Math.max(BT2.settleUntil, performance.now() + 1500);
 				BT2.showAudioMode();
 				BT2.updateLatency();
 				return true;
@@ -461,29 +463,129 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			});
 		},
 
-		// compat engine: the program fills a small queue every few milliseconds
-		compatTarget: 512,
-		compatLastUnderrun: 0,
+		// compat engine: the program fills a small queue every few milliseconds, and right before and
+		// after each screen frame (when the main thread is busiest). The queue is as small as works on
+		// this device: it grows a step at a dropout, and gets a step smaller only when it has measured
+		// room to spare while a song played (so it doesn't swing back and forth, which gave a click
+		// every few seconds). The size is remembered. FT2's own "Smaller/Medium/Bigger latency"
+		// (Config > Audio) sets the minimum.
+		compatTarget: 512,  // queue size now (samples)
+		compatLearned: 512, // the size that works on this device
+		compatMin: 256,     // from FT2's latency setting
 		compatSent: 0,
 		compatConsumed: 0,
 		compatReportTime: 0,
+		compatReportFrame: 0,
+		compatWindowStart: 0,
+		compatWindowLow: 1e9,
+		lastPump: 0,
+		longGapAt: 0,       // the program's longest pause in filling the queue lately (ms), and when it ended
+		longGapLen: 0,
+		settleUntil: 0,     // dropouts right after the start or an engine switch don't count (the program is busy)
+		latencyChoice: 512,
 		queueModuleAdded: false,
+
+		// called by the program (FT2's latency setting, in samples: 512 = Smaller, 1024 = Medium, 2048 = Bigger)
+		setLatencyChoice(samples) {
+			BT2.latencyChoice = samples;
+			const sr = BT2.ctx ? BT2.ctx.sampleRate : 48000;
+			BT2.compatMin = samples <= 512 ? 256 : Math.round(samples * sr / 48000 / 128) * 128;
+			BT2.compatApply();
+			if (BT2.audioMode === 'sp' && BT2.spWanted() !== BT2.spSize) setTimeout(() => BT2.attachEngine('sp'), 0); // new SP block size
+		},
+		latencyChoiceName() {
+			return BT2.latencyChoice <= 512 ? 'Smaller' : BT2.latencyChoice <= 1024 ? 'Medium' : 'Bigger';
+		},
+		compatApply() {
+			BT2.compatTarget = Math.max(BT2.compatMin, BT2.compatLearned);
+			BT2.updateLatency();
+		},
+
+		// the queue size that worked on this device (kept in the browser)
+		compatLoad() {
+			try {
+				const o = JSON.parse(localStorage.getItem('bt2-compat-buffer') || 'null');
+				if (o && o.size >= 128 && o.size <= 4096) return o.size;
+			} catch (e) {}
+			return 512;
+		},
+		compatSave(size) {
+			try { localStorage.setItem('bt2-compat-buffer', JSON.stringify({ size, t: Date.now() })); } catch (e) {}
+		},
+		compatResize(size) {
+			BT2.compatLearned = size;
+			BT2.compatSave(size);
+			BT2.compatApply();
+			BT2.showAudioMode();
+		},
+
+		// dropouts (= clicks), shown in the sound test, also for the previous session
+		sessionId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+		dropouts: 0,
+		dropoutsBefore: (() => { try { return JSON.parse(localStorage.getItem('bt2-dropouts') || 'null'); } catch (e) { return null; } })(),
+		gapsSeen: 0,
+		watchEngineGaps() { // the low-latency engine counts its own dropouts on the audio thread
+			const g = BT2.engineGaps();
+			if (g > BT2.gapsSeen) {
+				const n = g - BT2.gapsSeen;
+				BT2.gapsSeen = g;
+				if (BT2.started && !document.hidden && performance.now() - BT2.visibleSince > 1500) BT2.noteDropouts(n);
+			}
+		},
+		noteDropouts(n) {
+			BT2.dropouts += n;
+			if (Date.now() - (BT2.dropoutSavedAt || 0) > 1000) BT2.saveDropouts();
+			else if (!BT2.dropoutTimer) BT2.dropoutTimer = setTimeout(BT2.saveDropouts, 1100);
+		},
+		saveDropouts() { // at the start tap, after dropouts and when the app goes to the background
+			clearTimeout(BT2.dropoutTimer);
+			BT2.dropoutTimer = 0;
+			if (!BT2.started) return;
+			BT2.dropoutSavedAt = Date.now();
+			try {
+				localStorage.setItem('bt2-dropouts', JSON.stringify({ id: BT2.sessionId, n: BT2.dropouts, engine: BT2.audioMode,
+					buffer: BT2.audioMode === 'compat' ? BT2.compatTarget : 0, t: BT2.dropoutSavedAt }));
+			} catch (e) {}
+		},
+		engineGaps() { // dropouts in the low-latency engine (counted on the audio thread)
+			try { return Module._webAudioGaps ? Module._webAudioGaps() : 0; } catch (e) { return 0; }
+		},
+
 		async makeQueueNode(ctx) {
 			if (!BT2.queueModuleAdded) {
 				const code = `
 class BT2Queue extends AudioWorkletProcessor {
 	constructor() {
-		super(); this.q = []; this.pos = 0; this.consumed = 0; this.n = 0; this.under = false;
-		this.port.onmessage = (e) => this.q.push(e.data);
+		super(); this.q = []; this.pos = 0; this.consumed = 0; this.n = 0; this.frames = 0; this.low = 1e9;
+		this.events = 0; this.dry = true; this.lastL = 0; this.lastR = 0; this.fade = 0;
+		this.port.onmessage = (e) => { this.q.push(e.data); this.frames += e.data.length >> 1; };
 	}
 	process(inputs, outputs) {
 		const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
+		if (this.frames < this.low) this.low = this.frames; // the least that was left in the queue
 		for (let i = 0; i < L.length; i++) {
-			if (this.q.length === 0) { L[i] = 0; R[i] = 0; this.under = true; continue; }
-			const c = this.q[0]; L[i] = c[this.pos]; R[i] = c[this.pos + 1]; this.pos += 2; this.consumed++;
+			if (this.q.length === 0) {
+				// ran dry: let the last sample fade away instead of dropping to zero (a click), fade in again after
+				if (!this.dry) { this.dry = true; this.events++; }
+				this.lastL *= 0.98; this.lastR *= 0.98;
+				if (Math.abs(this.lastL) < 1e-6) this.lastL = 0;
+				if (Math.abs(this.lastR) < 1e-6) this.lastR = 0;
+				L[i] = this.lastL; R[i] = this.lastR; this.fade = 64;
+				continue;
+			}
+			this.dry = false;
+			const c = this.q[0];
+			let l = c[this.pos], r = c[this.pos + 1];
+			if (this.fade > 0) { const g = 1 - this.fade / 64; l *= g; r *= g; this.fade--; }
+			L[i] = l; R[i] = r; this.lastL = l; this.lastR = r;
+			this.pos += 2; this.consumed++; this.frames--;
 			if (this.pos >= c.length) { this.q.shift(); this.pos = 0; }
 		}
-		if (++this.n >= 4) { this.n = 0; this.port.postMessage({ consumed: this.consumed, under: this.under }); this.under = false; }
+		if (++this.n >= 4) {
+			this.n = 0;
+			this.port.postMessage({ consumed: this.consumed, under: this.events, low: this.low, frame: currentFrame + L.length });
+			this.events = 0; this.low = 1e9;
+		}
 		return true;
 	}
 }
@@ -495,20 +597,42 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const node = new AudioWorkletNode(ctx, 'bt2-queue', { numberOfInputs: 0, outputChannelCount: [2] });
 			BT2.compatSent = 0;
 			BT2.compatConsumed = 0;
-			BT2.compatReportTime = performance.now();
+			BT2.compatReportTime = BT2.lastPump = performance.now();
+			BT2.compatReportFrame = ctx.currentTime * ctx.sampleRate;
+			BT2.compatLearned = BT2.compatLoad();
+			BT2.compatApply();
 			node.port.onmessage = (e) => {
-				BT2.compatConsumed = e.data.consumed;
+				const d = e.data;
+				BT2.compatConsumed = d.consumed;
+				BT2.compatReportFrame = d.frame;
 				const now = performance.now();
 				BT2.compatReportTime = now;
-				// (dropouts while the app is in the background or just came back don't count)
-				const settling = document.hidden || now - BT2.visibleSince < 1500;
-				if (e.data.under && BT2.started && !settling) {
-					if (BT2.compatTarget < 4096) { BT2.compatTarget += 128; BT2.updateLatency(); }
-					BT2.compatLastUnderrun = now;
-				} else if (now - BT2.compatLastUnderrun > 3000 && BT2.compatTarget > 384) {
-					BT2.compatTarget -= 128; // no dropouts for a while: try a smaller buffer again
-					BT2.compatLastUnderrun = now;
-					BT2.updateLatency();
+				// the longest time the program could not fill the queue lately (now, or a pause that just ended)
+				const gap = Math.max(now - BT2.lastPump, now - BT2.longGapAt < 300 ? BT2.longGapLen : 0);
+				// (dropouts before the start, in the background, right after coming back or after the start don't count)
+				const counts = BT2.started && !document.hidden && now > BT2.settleUntil && now - BT2.visibleSince > 1500;
+				if (d.under && counts) {
+					BT2.noteDropouts(d.under);
+					// one step bigger, unless the program was busy for a long time (loading, saving): a bigger queue
+					// can't fix that, and the first moments after it don't count either
+					if (gap >= Math.max(80, 4000 * BT2.compatTarget / BT2.ctx.sampleRate)) BT2.noGrowUntil = now + 600;
+					else if (now > (BT2.noGrowUntil || 0) && BT2.compatTarget < 4096) {
+						BT2.compatResize(BT2.compatTarget + 128);
+						BT2.noGrowUntil = now + 250; // (one hiccup can give a couple of dropouts in a row: one step for it)
+					}
+					BT2.compatWindowStart = now;
+					BT2.compatWindowLow = 1e9;
+					return;
+				}
+				// one step smaller after 10 seconds of a playing song where the queue always had room to spare
+				let playing = false;
+				try { playing = counts && Module._webSongIsPlaying() === 1; } catch (err) {}
+				if (!playing) { BT2.compatWindowStart = now; BT2.compatWindowLow = 1e9; return; }
+				if (d.low < BT2.compatWindowLow) BT2.compatWindowLow = d.low;
+				if (now - BT2.compatWindowStart > 10000) {
+					if (BT2.compatWindowLow - 128 >= 384 && BT2.compatTarget - 128 >= BT2.compatMin) BT2.compatResize(BT2.compatTarget - 128);
+					BT2.compatWindowStart = now;
+					BT2.compatWindowLow = 1e9;
 				}
 			};
 			BT2.compatNode = node;
@@ -517,8 +641,15 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		},
 		pump() {
 			if (!BT2.compatNode || !BT2.ctx || BT2.ctx.state !== 'running') return;
+			const now = performance.now();
+			const gap = now - BT2.lastPump;
+			if (now - BT2.longGapAt > 300) BT2.longGapLen = 0;
+			if (gap > BT2.longGapLen) { BT2.longGapLen = gap; BT2.longGapAt = now; }
+			BT2.lastPump = now;
 			const sr = BT2.ctx.sampleRate;
-			const since = (performance.now() - BT2.compatReportTime) * sr / 1000;
+			// samples played since the last report: by the sound card's clock, or by the time since the report
+			// arrived (the report can arrive late when the program is busy). The larger guess is the safe one.
+			const since = Math.max(0, BT2.ctx.currentTime * sr - BT2.compatReportFrame, (now - BT2.compatReportTime) * sr / 1000);
 			let queued = BT2.compatSent - BT2.compatConsumed - since;
 			let guard = 0;
 			while (queued < BT2.compatTarget && guard++ < 32) {
@@ -532,10 +663,15 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		},
 
 		// SP engine: the mixer is called directly from the audio event
+		// (block size from FT2's latency setting: Smaller 512, Medium 1024, Bigger 2048)
 		spSize: 512,
-		makeSPNode(ctx) {
+		spWanted() {
 			const m = /[?&]sp=(\d+)/.exec(location.search);
-			if (m) BT2.spSize = Math.min(4096, Math.max(256, 1 << Math.round(Math.log2(+m[1]))));
+			if (m) return Math.min(4096, Math.max(256, 1 << Math.round(Math.log2(+m[1]))));
+			return BT2.latencyChoice <= 512 ? 512 : BT2.latencyChoice <= 1024 ? 1024 : 2048;
+		},
+		makeSPNode(ctx) {
+			BT2.spSize = BT2.spWanted();
 			const sp = ctx.createScriptProcessor(BT2.spSize, 1, 2);
 			sp.onaudioprocess = (e) => {
 				const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
@@ -1538,15 +1674,22 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 		const open = () => {
 			if (!BT2.started || !Module.bt2FS || S.open) return;
-			S.open = true;
-			try { applyColors(); } catch (e) {}
-			S.own = buildOwn();
-			syncButtons();
-			box().classList.remove('hidden');
-			const inp = $('searchInput');
-			inp.focus();
-			inp.select();
-			run();
+			try {
+				try { applyColors(); } catch (e) {}
+				S.own = buildOwn();
+				syncButtons();
+				box().classList.remove('hidden');
+				S.open = true;
+				const inp = $('searchInput');
+				inp.focus();
+				inp.select();
+				run();
+			} catch (e) {
+				console.warn('search', e); // never leave the keyboard with a window that isn't there
+				S.open = false;
+				box().classList.add('hidden');
+				BT2.focusCanvas();
+			}
 		};
 		const close = () => {
 			if (!S.open) return;
@@ -1577,7 +1720,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const r = e.target.closest('.ft-row');
 			if (r) { S.sel = +r.dataset.i; act(S.results[S.sel], !!(b && b.dataset.folder)); }
 		});
-		return { open, close, onKey, isOpen: () => S.open, state: S, run };
+		return { open, close, onKey, isOpen: () => S.open && !box().classList.contains('hidden'), state: S, run };
 	})();
 	starfield.kick();
 	window.addEventListener('resize', () => starfield.kick());
@@ -1693,9 +1836,35 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	};
 	window.addEventListener('keydown', onKey, true);
 	window.addEventListener('keyup', onKey, true);
+	// Switching apps (Cmd+Tab on iPad, Alt+Tab on PC) or a system shortcut takes the keyboard away, and
+	// the key releases go elsewhere: don't let a key or Ctrl/Shift/Alt/Cmd stay "held" in FT2, and give
+	// the keyboard back to FT2 when the app is back.
+	BT2.keyboardReset = () => {
+		altGrHeld = false;
+		capsDownState = null;
+		if (!ready()) return;
+		try { Module._webSyncModifiers(0); } catch (e) {}
+		for (const id of Object.keys(injectedKeys)) {
+			try { Module._webKeyEvent(injectedKeys[id], 0); } catch (e) {}
+			delete injectedKeys[id];
+		}
+	};
+	const keyboardBack = () => {
+		BT2.keyboardReset();
+		if (BT2.started && !overlayOpen() && !BT2.search.isOpen() && $('diag').classList.contains('hidden')) BT2.focusCanvas();
+	};
+	window.addEventListener('blur', BT2.keyboardReset);
+	window.addEventListener('focus', keyboardBack);
+	window.addEventListener('pageshow', keyboardBack);
+	document.addEventListener('visibilitychange', () => { if (!document.hidden) keyboardBack(); else BT2.keyboardReset(); });
 	window.addEventListener('keypress', (e) => { if (BT2.search.isOpen()) e.stopImmediatePropagation(); }, true);
 	// modifier keys held while clicking/tapping (Shift/Ctrl/Alt + click is used in FT2)
-	window.addEventListener('pointerdown', (e) => { if (e.isTrusted && ready() && e.pointerType === 'mouse') Module._webSyncModifiers(modFlags(e)); }, true);
+	window.addEventListener('pointerdown', (e) => {
+		if (!e.isTrusted) return;
+		if (ready() && e.pointerType === 'mouse') Module._webSyncModifiers(modFlags(e));
+		// a tap on FT2 gives it the keyboard (taps don't move the focus by themselves here)
+		if (e.target === $('canvas') && document.activeElement !== $('canvas')) BT2.focusCanvas();
+	}, true);
 
 	// Alt+Enter in FT2: fullscreen (the whole page). In Chrome/Edge the keyboard is also "locked" then,
 	// so keys the browser normally keeps for itself (Ctrl+T, Ctrl+N, Ctrl+W, Alt+F4 ...) reach FT2.
@@ -1798,9 +1967,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			});
 		}
 		BT2.started = true;
+		BT2.settleUntil = performance.now() + 2500;
 		$('start').classList.add('hidden');
 		BT2.focusCanvas();
 		setTimeout(BT2.showAudioMode, 500);
+		setTimeout(BT2.saveDropouts, 2000); // (after a possible engine switch)
 	});
 
 	// ---------- sound test / diagnostics
@@ -1822,11 +1993,17 @@ registerProcessor('bt2-queue', BT2Queue);`;
 					L.push('Utgang bak:     ' + behind.toFixed(1) + ' ms (målt)');
 				}
 			}
-			if (BT2.audioMode === 'compat') L.push('Buffer:         ' + BT2.compatTarget + ' samples');
-			if (BT2.audioMode === 'sp') L.push('Buffer:         ' + BT2.spSize + ' samples');
-			if (BT2.audioMode === 'worklet') L.push('Buffer:         128 samples (fast, i lydtråden)');
+			const ms = (n) => (n * 1000 / c.sampleRate).toFixed(1) + ' ms';
+			if (BT2.audioMode === 'compat') L.push('Buffer:         ' + BT2.compatTarget + ' samples (' + ms(BT2.compatTarget) + '), minst ' + BT2.compatMin + ' (FT2: ' + BT2.latencyChoiceName() + ' latency)');
+			if (BT2.audioMode === 'sp') L.push('Buffer:         ' + BT2.spSize + ' samples (' + ms(BT2.spSize) + ', FT2: ' + BT2.latencyChoiceName() + ' latency)');
+			if (BT2.audioMode === 'worklet') L.push('Buffer:         128 samples (' + ms(128) + ', fast, i lydtråden)');
 			if (BT2.deferredEngine) L.push('Bytter til:     lav forsinkelse når du trykker Start');
-			L.push('Ca. forsinkelse: ' + BT2.latencyMs() + ' ms');
+			L.push('Ca. forsinkelse: ' + BT2.latencyMs() + ' ms' + (!(c.outputLatency > 0.04) ? ' (+ Bluetooth-hodetelefoner, de måles ikke her)' : ''));
+			L.push('Avbrudd i lyden: ' + BT2.dropouts + ' siden start' + (BT2.audioMode === 'sp' ? ' (SP måler ikke)' : ''));
+			const b = BT2.dropoutsBefore;
+			if (b && b.id !== BT2.sessionId) {
+				L.push('Forrige gang:   ' + b.n + ' avbrudd (' + (BT2.ENGINE_NAMES[b.engine] || b.engine || '-') + (b.buffer ? ', buffer ' + b.buffer : '') + ')');
+			}
 		}
 		L.push('Enhet:          ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 60));
 		L.push('');
@@ -1836,6 +2013,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		$('diagText').textContent = L.join('\n');
 	};
 	setInterval(diagUpdate, 250);
+	setInterval(BT2.watchEngineGaps, 1000);
 	$('versionLine').textContent = 'Versjon ' + BT2_VERSION + ' · ' + BT2_DATE;
 	$('backupButton').addEventListener('click', () => { if (Module.bt2FS) BT2.backup(); });
 	$('updateNow').addEventListener('click', () => BT2.appUpdate());
@@ -1883,12 +2061,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// save files when the app goes to the background; wake the sound up again when it comes back
 	BT2.visibleSince = performance.now();
 	document.addEventListener('visibilitychange', () => {
-		if (document.hidden) { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); return; }
+		if (document.hidden) { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); BT2.saveDropouts(); return; }
 		BT2.visibleSince = performance.now();
 		if (BT2.started && BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {});
 		BT2.starfield.kick();
 	});
-	window.addEventListener('pagehide', () => { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); });
+	window.addEventListener('pagehide', () => { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); BT2.saveDropouts(); });
 
 	// ask the browser to keep our files (not clear them when space is low)
 	try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
