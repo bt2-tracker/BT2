@@ -195,7 +195,7 @@ typedef struct pointer_t
 	SDL_Scancode sentScancode; // what we sent on key down (for the matching key up)
 } pointer_t;
 
-static bool shown = true, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
+static bool shown = false, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
 static uint8_t heldCount[NUM_KEYS];
 static pointer_t pointers[MAX_POINTERS];
 static uint32_t *kbBuffer;
