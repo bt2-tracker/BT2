@@ -22,6 +22,7 @@
 #include "ft2_tables.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#include "gfxdata/ft2_bernt_logo.h" // BerntTracker 2-logo
 
 // for pattern marking w/ keyboard
 static int8_t lastChMark;
@@ -2216,13 +2217,13 @@ void changeLogoType(uint8_t logoType)
 
 	if (logoType == 0)
 	{
-		pushButtons[PB_LOGO].bitmapUnpressed = &bmp.ft2LogoBadges[(154 * 32) * 0];
-		pushButtons[PB_LOGO].bitmapPressed = &bmp.ft2LogoBadges[(154 * 32) * 1];
+		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(154 * 32) * 0];
+		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(154 * 32) * 1];
 	}
 	else
 	{
-		pushButtons[PB_LOGO].bitmapUnpressed = &bmp.ft2LogoBadges[(154 * 32) * 2];
-		pushButtons[PB_LOGO].bitmapPressed = &bmp.ft2LogoBadges[(154 * 32) * 3];
+		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(154 * 32) * 2];
+		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(154 * 32) * 3];
 	}
 
 	drawPushButton(PB_LOGO);
