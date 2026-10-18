@@ -20,7 +20,11 @@
 
 #define FT2_VBLANK_HZ 70.086302895323 /* VGA 640x400 @ 70Hz */
 #define SCREEN_W 632
-#define SCREEN_H 400
+#define SCREEN_H_BASE 400 // the original FT2 screen height
+#define SCREEN_H_MAX 720 // BerntTracker: the screen can get taller (more pattern rows) when there is room
+extern int32_t bt2ScreenH; // ft2_video.c
+#define SCREEN_H (bt2ScreenH)
+#define SCREEN_EXTRA_H (bt2ScreenH - SCREEN_H_BASE)
 #define VBLANK_HZ 60
 
 // 70Hz (FT2 vblank) delta -> 60Hz vblank delta (rounded)

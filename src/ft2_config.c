@@ -211,6 +211,18 @@ static void configDrawMasterVol(void)
 static void setDefaultConfigSettings(void)
 {
 	memcpy(configBuffer, defConfigData, CONFIG_FILE_SIZE);
+
+	/* BerntTracker: defaults closer to the original DOS Fasttracker II:
+	** "Blues" palette, 2-point linear interpolation (like FT2/GUS), volume ramping on (FT2.08+), 44.1kHz.
+	*/
+	config_t tmp;
+	memcpy(&tmp, configBuffer, CONFIG_FILE_SIZE);
+	tmp.cfg_StdPalNum = PAL_BLUES;
+	tmp.interpolation = INTERPOLATION_LINEAR;
+	tmp.specialFlags &= ~NO_VOLRAMP_FLAG;
+	tmp.audioFreq = 44100;
+	memcpy(configBuffer, &tmp, CONFIG_FILE_SIZE);
+
 	loadConfigFromBuffer(true);
 }
 

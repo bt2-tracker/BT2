@@ -35,6 +35,9 @@
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
+#include "ft2_scrollbars.h"
+#include "ft2_pushbuttons.h"
+#include "ft2_tables.h"
 
 static const uint8_t textCursorData[12] =
 {
@@ -45,6 +48,7 @@ static const uint8_t textCursorData[12] =
 };
 
 video_t video; // globalized
+int32_t bt2ScreenH = SCREEN_H_BASE; // BerntTracker: current FT2 screen height (can be taller than 400)
 
 static bool songIsModified;
 static char wndTitle[256];
@@ -196,16 +200,21 @@ void flipFrame(void)
 	if (video.showFPSCounter)
 		drawFPSCounter();
 
-	SDL_UpdateTexture(video.texture, NULL, video.frameBuffer, SCREEN_W * sizeof (int32_t));
+	SDL_Rect screenRect; // BerntTracker: only the used part of the (taller) buffer
+	screenRect.x = 0;
+	screenRect.y = 0;
+	screenRect.w = SCREEN_W;
+	screenRect.h = SCREEN_H;
+	SDL_UpdateTexture(video.texture, &screenRect, video.frameBuffer, SCREEN_W * sizeof (int32_t));
 
 	// SDL 2.0.14 bug on Windows (?): This function consumes ever-increasing memory if the program is minimized
 	if (!minimized)
 		SDL_RenderClear(video.renderer);
 
 	if (video.useCustomRenderRect)
-		SDL_RenderCopy(video.renderer, video.texture, NULL, &video.renderRect);
+		SDL_RenderCopy(video.renderer, video.texture, &screenRect, &video.renderRect);
 	else
-		SDL_RenderCopy(video.renderer, video.texture, NULL, NULL);
+		SDL_RenderCopy(video.renderer, video.texture, &screenRect, NULL);
 
 	tkRender(video.renderer); // BerntTracker: on-screen keyboard below the FT2 screen
 
@@ -322,9 +331,62 @@ static void getWindowModeSize(int32_t *w, int32_t *h)
 	*h = (int32_t)(dTotalH * dScale);
 }
 
+/* BerntTracker: on a tablet/browser (or fullscreen), use the free space below the FT2 screen
+** for more pattern rows instead of leaving it empty (mostly when the keyboard is hidden).
+*/
+static int32_t calcWantedScreenH(void)
+{
+#ifndef __EMSCRIPTEN__
+	if (!video.fullscreen || (config.specialFlags2 & STRETCH_IMAGE))
+		return SCREEN_H_BASE;
+#endif
+	if (video.windowW <= 0 || video.windowH <= 0)
+		return SCREEN_H_BASE;
+
+	const double dTotalH = ((double)video.windowH * TK_W) / video.windowW; // in "native" pixels
+	int32_t h = (int32_t)dTotalH - tkGetAreaHeight();
+	if (h < SCREEN_H_BASE) h = SCREEN_H_BASE;
+	if (h > SCREEN_H_MAX) h = SCREEN_H_MAX;
+	return h;
+}
+
+static void applyScreenHeight(int32_t newH)
+{
+	if (newH == bt2ScreenH || ui.sysReqShown)
+		return; // (not while a dialog box is open, it would be erased)
+
+	bt2ScreenH = newH;
+	updatePatternTablesForScreenHeight(SCREEN_EXTRA_H);
+
+	// the channel scroll bar sits at the bottom of the pattern editor
+	pushButtons[PB_CHAN_SCROLL_LEFT].y = (uint16_t)(385 + SCREEN_EXTRA_H);
+	pushButtons[PB_CHAN_SCROLL_RIGHT].y = (uint16_t)(385 + SCREEN_EXTRA_H);
+	scrollBars[SB_CHAN_SCROLL].y = (uint16_t)(385 + SCREEN_EXTRA_H);
+
+	if (editor.mainLoopOngoing) // redraw everything at the new height
+	{
+		memset(video.frameBuffer, 0, SCREEN_W * SCREEN_H_MAX * sizeof (uint32_t));
+		hideTopScreen();
+		showTopScreen(true);
+		showBottomScreen();
+		if (ui.pattChanScrollShown)
+			setScrollBarPos(SB_CHAN_SCROLL, scrollBars[SB_CHAN_SCROLL].pos, false);
+		ui.updatePatternEditor = true;
+		ui.updatePosSections = true;
+	}
+}
+
+void videoFillExtraScreenArea(void) // empty panel below non-pattern screens (when the screen is taller)
+{
+	if (SCREEN_EXTRA_H > 0 && !ui.patternEditorShown && !ui.extendedPatternEditor)
+		drawFramework(0, SCREEN_H_BASE, SCREEN_W, SCREEN_EXTRA_H, FRAMEWORK_TYPE1);
+}
+
 // BerntTracker: places the FT2 screen and the on-screen keyboard inside the window
 static void updateTouchKeyboardLayout(void)
 {
+	applyScreenHeight(calcWantedScreenH());
+
 	int32_t cx = 0, cy = 0, cw = video.windowW, ch = video.windowH;
 
 #ifdef __EMSCRIPTEN__
@@ -992,16 +1054,16 @@ void updateWindowTitle(bool forceUpdate)
 		songTitleTrunc[sizeof (songTitleTrunc)-1] = '\0';
 
 			if (song.isModified)
-				sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"%s\" (unsaved)", PROG_VER_STR, songTitleTrunc);
+				sprintf(wndTitle, "Bernttracker II (FT2 clone v%s) - \"%s\" (unsaved)", PROG_VER_STR, songTitleTrunc);
 			else
-				sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"%s\"", PROG_VER_STR, songTitleTrunc);
+				sprintf(wndTitle, "Bernttracker II (FT2 clone v%s) - \"%s\"", PROG_VER_STR, songTitleTrunc);
 	}
 	else
 	{
 		if (song.isModified)
-			sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"untitled\" (unsaved)", PROG_VER_STR);
+			sprintf(wndTitle, "Bernttracker II (FT2 clone v%s) - \"untitled\" (unsaved)", PROG_VER_STR);
 		else
-			sprintf(wndTitle, "BerntTracker 2 (FT2 clone v%s) - \"untitled\"", PROG_VER_STR);
+			sprintf(wndTitle, "Bernttracker II (FT2 clone v%s) - \"untitled\"", PROG_VER_STR);
 	}
 
 	SDL_SetWindowTitle(video.window, wndTitle);
@@ -1022,7 +1084,7 @@ bool recreateTexture(void)
 		SDL_SetHint("SDL_RENDER_SCALE_QUALITY", "nearest");
 
 	// SDL_PIXELFORMAT_ARGB8888 is the fastest mode when using texture streaming
-	video.texture = SDL_CreateTexture(video.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H);
+	video.texture = SDL_CreateTexture(video.renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, SCREEN_W, SCREEN_H_MAX);
 	if (video.texture == NULL)
 	{
 		showErrorMsgBox("Couldn't create a %dx%d GPU texture:\n\"%s\"\n\nIs your GPU (+ driver) too old?", SCREEN_W, SCREEN_H, SDL_GetError());
@@ -1126,7 +1188,7 @@ bool setupRenderer(void)
 	}
 
 	// framebuffer used by SDL (for texture)
-	video.frameBuffer = (uint32_t *)malloc(SCREEN_W * SCREEN_H * sizeof (uint32_t));
+	video.frameBuffer = (uint32_t *)calloc(SCREEN_W * SCREEN_H_MAX, sizeof (uint32_t)); // BerntTracker: room for a taller screen
 	if (video.frameBuffer == NULL)
 	{
 		showErrorMsgBox("Not enough memory!");
@@ -1158,6 +1220,8 @@ bool setupRenderer(void)
 
 void handleRedrawing(void)
 {
+	videoFillExtraScreenArea(); // BerntTracker
+
 	if (!ui.configScreenShown && !ui.helpScreenShown)
 	{
 		if (ui.aboutScreenShown)

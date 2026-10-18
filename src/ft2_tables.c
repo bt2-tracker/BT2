@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include <stdbool.h>
 #include "ft2_palette.h" // pal16 typedef
 #include "ft2_pattern_ed.h" // pattCoord_t/pattCoord2_t/pattCoordsMouse_t/markCoord_t typedef
@@ -473,7 +474,7 @@ const int8_t maxVisibleChans2[4] = { 4, 6, 8, 12 };
 const uint16_t chanWidths[6] = { 141, 141, 93, 69, 45, 45 };
 
 // for pattern marking
-const pattCoordsMouse_t pattCoordMouseTable[2][2][2] =
+pattCoordsMouse_t pattCoordMouseTable[2][2][2] =
 {
 	/*
 	struct organization:
@@ -568,7 +569,7 @@ const uint8_t hex2Dec[256] =
 };
 
 // for actual pattern data drawing
-const pattCoord_t pattCoordTable[2][2][2] =
+pattCoord_t pattCoordTable[2][2][2] =
 {
 	/*
 	struct organization:
@@ -607,7 +608,7 @@ const pattCoord_t pattCoordTable[2][2][2] =
 };
 
 // for framework drawing
-const pattCoord2_t pattCoord2Table[2][2][2] =
+pattCoord2_t pattCoord2Table[2][2][2] =
 {
 	/*
 	struct organization:
@@ -645,7 +646,7 @@ const pattCoord2_t pattCoord2Table[2][2][2] =
 	}
 };
 
-const markCoord_t markCoordTable[2][2][2] =
+markCoord_t markCoordTable[2][2][2] =
 {
 	/*
 	struct organization:
@@ -869,3 +870,67 @@ const uint8_t defConfigData[CONFIG_FILE_SIZE] =
 	0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,
 	0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x40,0x1F,0x01,0x00,0x00,0x08,0x00,0x00,0x00
 };
+
+/* BerntTracker: when the screen is taller than 400 lines (keyboard hidden on a tablet),
+** the pattern editor gets extra rows. The tables above are adjusted from their original values.
+*/
+void updatePatternTablesForScreenHeight(int32_t extraH)
+{
+	static bool saved;
+	static pattCoordsMouse_t mouseBase[2][2][2];
+	static pattCoord_t coordBase[2][2][2];
+	static pattCoord2_t coord2Base[2][2][2];
+	static markCoord_t markBase[2][2][2];
+
+	if (!saved)
+	{
+		memcpy(mouseBase, pattCoordMouseTable, sizeof (mouseBase));
+		memcpy(coordBase, pattCoordTable, sizeof (coordBase));
+		memcpy(coord2Base, pattCoord2Table, sizeof (coord2Base));
+		memcpy(markBase, markCoordTable, sizeof (markBase));
+		saved = true;
+	}
+
+	if (extraH < 0)
+		extraH = 0;
+
+	for (int32_t s = 0; s < 2; s++) // pattern stretch (bigger rows)
+	{
+		const int32_t rowH = s ? 11 : 8;
+		const int32_t addRows = extraH / rowH;
+		const int32_t addUpper = addRows / 2;
+		const int32_t addLower = addRows - addUpper;
+		const int32_t shift = addUpper * rowH;
+
+		for (int32_t c = 0; c < 2; c++) // channel scroll bar
+		{
+			for (int32_t e = 0; e < 2; e++) // extended pattern editor
+			{
+				pattCoordsMouse_t *m = &pattCoordMouseTable[s][c][e];
+				*m = mouseBase[s][c][e];
+				m->midRowY += (uint16_t)shift;
+				m->lowerRowsY += (uint16_t)shift;
+				m->numUpperRows += (uint16_t)addUpper;
+
+				pattCoord_t *p = &pattCoordTable[s][c][e];
+				*p = coordBase[s][c][e];
+				p->lowerRowsY += (uint16_t)shift;
+				p->midRowTextY += (uint16_t)shift;
+				p->lowerRowsTextY += (uint16_t)shift;
+				p->numUpperRows += (uint16_t)addUpper;
+				p->numLowerRows += (uint16_t)addLower;
+
+				pattCoord2_t *p2 = &pattCoord2Table[s][c][e];
+				*p2 = coord2Base[s][c][e];
+				p2->lowerRowsY += (uint16_t)shift;
+				p2->upperRowsH += (uint16_t)shift;
+				p2->lowerRowsH += (uint16_t)(extraH - shift);
+
+				markCoord_t *mk = &markCoordTable[s][c][e];
+				*mk = markBase[s][c][e];
+				mk->midRowY += (uint16_t)shift;
+				mk->lowerRowsY += (uint16_t)shift;
+			}
+		}
+	}
+}

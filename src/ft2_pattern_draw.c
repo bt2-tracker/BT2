@@ -75,7 +75,7 @@ void drawPatternBorders(void)
 
 	// fill scrollbar framework (if needed)
 	if (ui.pattChanScrollShown)
-		drawFramework(0, 383, 632, 17, FRAMEWORK_TYPE1);
+		drawFramework(0, 383 + SCREEN_EXTRA_H, 632, 17, FRAMEWORK_TYPE1);
 
 	if (config.ptnFrmWrk)
 	{
@@ -83,36 +83,36 @@ void drawPatternBorders(void)
 
 		if (ui.extendedPatternEditor)
 		{
-			vLine(0,   69, 330, PAL_DSKTOP1);
-			vLine(631, 68, 331, PAL_DSKTOP2);
+			vLine(0,   69, 330 + SCREEN_EXTRA_H, PAL_DSKTOP1);
+			vLine(631, 68, 331 + SCREEN_EXTRA_H, PAL_DSKTOP2);
 
-			vLine(1,   69, 330, PAL_DESKTOP);
-			vLine(630, 69, 330, PAL_DESKTOP);
+			vLine(1,   69, 330 + SCREEN_EXTRA_H, PAL_DESKTOP);
+			vLine(630, 69, 330 + SCREEN_EXTRA_H, PAL_DESKTOP);
 
 			hLine(0, 68, 631, PAL_DSKTOP1);
 			hLine(1, 69, 630, PAL_DESKTOP);
 
 			if (!ui.pattChanScrollShown)
 			{
-				hLine(1, 398, 630, PAL_DESKTOP);
-				hLine(0, 399, 632, PAL_DSKTOP2);
+				hLine(1, 398 + SCREEN_EXTRA_H, 630, PAL_DESKTOP);
+				hLine(0, 399 + SCREEN_EXTRA_H, 632, PAL_DSKTOP2);
 			}
 		}
 		else
 		{
-			vLine(0,   174, 225, PAL_DSKTOP1);
-			vLine(631, 173, 226, PAL_DSKTOP2);
+			vLine(0,   174, 225 + SCREEN_EXTRA_H, PAL_DSKTOP1);
+			vLine(631, 173, 226 + SCREEN_EXTRA_H, PAL_DSKTOP2);
 
-			vLine(1,   174, 225, PAL_DESKTOP);
-			vLine(630, 174, 225, PAL_DESKTOP);
+			vLine(1,   174, 225 + SCREEN_EXTRA_H, PAL_DESKTOP);
+			vLine(630, 174, 225 + SCREEN_EXTRA_H, PAL_DESKTOP);
 
 			hLine(0, 173, 631, PAL_DSKTOP1);
 			hLine(1, 174, 630, PAL_DESKTOP);
 
 			if (!ui.pattChanScrollShown)
 			{
-				hLine(1, 398, 630, PAL_DESKTOP);
-				hLine(0, 399, 632, PAL_DSKTOP2);
+				hLine(1, 398 + SCREEN_EXTRA_H, 630, PAL_DESKTOP);
+				hLine(0, 399 + SCREEN_EXTRA_H, 632, PAL_DSKTOP2);
 			}
 		}
 
@@ -147,12 +147,12 @@ void drawPatternBorders(void)
 
 		if (ui.extendedPatternEditor)
 		{
-			const int32_t clearSize = ui.pattChanScrollShown ? (SCREEN_W * sizeof (int32_t) * 315) : (SCREEN_W * sizeof (int32_t) * 332);
+			const int32_t clearSize = ui.pattChanScrollShown ? (SCREEN_W * sizeof (int32_t) * (315 + SCREEN_EXTRA_H)) : (SCREEN_W * sizeof (int32_t) * (332 + SCREEN_EXTRA_H));
 			memset(&video.frameBuffer[68 * SCREEN_W], 0, clearSize);
 		}
 		else
 		{
-			const int32_t clearSize = ui.pattChanScrollShown ? (SCREEN_W * sizeof(int32_t) * 210) : (SCREEN_W * sizeof(int32_t) * 227);
+			const int32_t clearSize = ui.pattChanScrollShown ? (SCREEN_W * sizeof(int32_t) * (210 + SCREEN_EXTRA_H)) : (SCREEN_W * sizeof(int32_t) * (227 + SCREEN_EXTRA_H));
 			memset(&video.frameBuffer[173 * SCREEN_W], 0, clearSize);
 		}
 
@@ -269,7 +269,7 @@ static void writePatternBlockMark(int32_t currRow, uint32_t rowHeight, const pat
 		if (y1 == pattCoord->upperRowsY-1 || y1 == pattCoord->lowerRowsY-1)
 			y1++;
 
-		if (y2 == 384)
+		if (y2 == 384 + SCREEN_EXTRA_H)
 			y2--;
 
 		// this can actually happen here, don't render in that case

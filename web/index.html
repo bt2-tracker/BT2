@@ -2,7 +2,7 @@
 <html lang="no">
 <head>
 <meta charset="utf-8">
-<title>BerntTracker II</title>
+<title>Bernttracker II</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -66,16 +66,16 @@ button.small {
 <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
 
 <div id="loading" class="overlay">
-	<div class="logo">Berntracker <span>II</span></div>
+	<div class="logo">Bernttracker <span>II</span></div>
 	<div class="bar"><div id="progress"></div></div>
 	<div class="status" id="loadStatus">Laster…</div>
 </div>
 
 <div id="start" class="overlay hidden">
-	<div class="logo">Berntracker <span>II</span></div>
+	<div class="logo">Bernttracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.3 · 18.10.2026</div>
+	<div class="mode">Versjon 0.4 · 18.10.2026</div>
 	<button class="small" id="diagButton">Lydtest</button>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
@@ -93,6 +93,7 @@ button.small {
 	<div class="row">
 		<button class="small" id="engineFast">Bruk lavforsinkelse-motor</button>
 		<button class="small" id="engineCompat">Bruk kompatibel motor</button>
+		<button class="small" id="engineSP">Bruk SP-motor</button>
 	</div>
 	<button class="small" id="diagClose">Lukk</button>
 </div>
@@ -158,6 +159,7 @@ button.small {
 			if (!c) return 0;
 			let s = (c.baseLatency || 0) + (c.outputLatency || 0);
 			if (BT2.audioMode === 'worklet') s += 128 / c.sampleRate;
+			else if (BT2.audioMode === 'sp') s += 2 * BT2.spSize / c.sampleRate;
 			else s += (BT2.compatTarget + 128) / c.sampleRate;
 			return Math.round(s * 1000);
 		},
@@ -165,7 +167,7 @@ button.small {
 		showAudioMode() {
 			const c = BT2.ctx;
 			if (!c) return;
-			const name = BT2.audioMode === 'worklet' ? 'lav forsinkelse' : 'kompatibel modus';
+			const name = BT2.audioMode === 'worklet' ? 'lav forsinkelse' : BT2.audioMode === 'sp' ? 'SP-modus (' + BT2.spSize + ')' : 'kompatibel modus';
 			$('audioMode').innerHTML = 'Lyd: <b>' + name + '</b> · ' + c.sampleRate + ' Hz · ca. ' + BT2.latencyMs() + ' ms';
 		},
 
@@ -176,6 +178,7 @@ button.small {
 		compatConsumed: 0,
 		compatReportTime: 0,
 		async openCompatAudio() {
+			if (/[?&]sp\b/.test(location.search)) return BT2.openScriptProcessorAudio();
 			try {
 				const AC = window.AudioContext || window.webkitAudioContext;
 				const ctx = new AC({ latencyHint: 'interactive' });
@@ -216,6 +219,35 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				BT2.compatNode = node;
 				BT2.audioStarted(ctx, 'compat', node);
 				setInterval(BT2.pump, 4);
+				return ctx.sampleRate;
+			} catch (e) {
+				console.error('Audio failed', e);
+				return 0;
+			}
+		},
+		// "SP" mode: the old ScriptProcessorNode, the mixer is called directly from the audio event
+		spSize: 512,
+		openScriptProcessorAudio() {
+			try {
+				const AC = window.AudioContext || window.webkitAudioContext;
+				const ctx = new AC({ latencyHint: 'interactive' });
+				const m = /[?&]sp=(\d+)/.exec(location.search);
+				if (m) BT2.spSize = Math.min(4096, Math.max(256, 1 << Math.round(Math.log2(+m[1]))));
+				const sp = ctx.createScriptProcessor(BT2.spSize, 0, 2);
+				sp.onaudioprocess = (e) => {
+					const L = e.outputBuffer.getChannelData(0), R = e.outputBuffer.getChannelData(1);
+					const n = L.length;
+					for (let pos = 0; pos < n; pos += 512) {
+						const frames = Math.min(512, n - pos);
+						const ptr = Module._webAudioRenderChunk(frames) >> 2;
+						const H = Module.HEAPF32;
+						for (let i = 0; i < frames; i++) { L[pos + i] = H[ptr + 2 * i]; R[pos + i] = H[ptr + 2 * i + 1]; }
+					}
+				};
+				sp.connect(ctx.destination);
+				BT2.spNode = sp;
+				BT2.compatTarget = BT2.spSize;
+				BT2.audioStarted(ctx, 'sp', sp);
 				return ctx.sampleRate;
 			} catch (e) {
 				console.error('Audio failed', e);
@@ -315,7 +347,38 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			return fx >= bx && fx < bx + bw && fy >= by && fy < by + bh;
 		},
 
+		// Demo Tracks: copied into the user's own folders the first time (and when new ones are added)
+		async installDemos() {
+			try {
+				const FS = Module.bt2FS;
+				const res = await fetch('demo/index.json', { cache: 'no-cache' });
+				if (!res.ok) return;
+				const list = await res.json();
+				const base = '/home/web_user/BT2/Demo Tracks';
+				let added = 0;
+				for (const f of list.files) {
+					const dest = base + '/' + f.path;
+					if (FS.analyzePath(dest).exists) continue;
+					const parts = dest.split('/');
+					for (let i = 2; i < parts.length; i++) {
+						const dir = parts.slice(0, i).join('/');
+						if (dir && !FS.analyzePath(dir).exists) FS.mkdir(dir);
+					}
+					const r = await fetch('demo/' + f.path.split('/').map(encodeURIComponent).join('/'));
+					if (!r.ok) continue;
+					FS.writeFile(dest, new Uint8Array(await r.arrayBuffer()));
+					added++;
+				}
+				if (added > 0) {
+					Module._webImportDone();
+					BT2.syncFiles();
+					BT2.toast(added + ' demo-låter lagt i «Demo Tracks»');
+				}
+			} catch (e) { console.warn('Demo Tracks', e); }
+		},
+
 		appStarted() {
+			setTimeout(BT2.installDemos, 1500);
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');
 			BT2.showAudioMode();
@@ -350,7 +413,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		if ($('diag').classList.contains('hidden')) return;
 		const c = BT2.ctx;
 		const L = [];
-		L.push('Motor:          ' + (BT2.audioMode === 'worklet' ? 'lavforsinkelse (AudioWorklet)' : BT2.audioMode === 'compat' ? 'kompatibel' : '-'));
+		L.push('Motor:          ' + (BT2.audioMode === 'worklet' ? 'lavforsinkelse (AudioWorklet)' : BT2.audioMode === 'compat' ? 'kompatibel' : BT2.audioMode === 'sp' ? 'SP (ScriptProcessor ' + BT2.spSize + ')' : '-'));
 		L.push('Isolert side:   ' + (window.crossOriginIsolated ? 'ja' : 'nei'));
 		if (c) {
 			L.push('Status:         ' + c.state);
@@ -385,6 +448,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	});
 	$('engineFast').addEventListener('click', () => { location.href = location.pathname; });
 	$('engineCompat').addEventListener('click', () => { location.href = location.pathname + '?compat'; });
+	$('engineSP').addEventListener('click', () => { location.href = location.pathname + '?compat&sp=512'; });
 
 	// portrait hint (phones and tablets held upright)
 	const checkRotate = () => {

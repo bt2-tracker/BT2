@@ -25,6 +25,9 @@
 #include "ft2_diskop.h"
 #include "ft2_audio.h"
 #include "scopes/ft2_scopes.h"
+#include "ft2_palette.h"
+#include "ft2_tables.h"
+#include "mixer/ft2_mix.h"
 
 void webScopesTick(void); // ft2_scopes.c
 void webDiskOpStorePathsInConfig(void); // ft2_diskop.c
@@ -411,6 +414,24 @@ void webInit(void) // after the config has been loaded
 
 	// the browser/iPad shows its own pointer (or none for touch), the FT2 pointer would get stuck
 	config.specialFlags2 |= HARDWARE_MOUSE;
+
+	/* One-time switch to the FT2-like defaults (blue palette, linear interpolation like the
+	** original, volume ramping) for people who opened an earlier test version.
+	*/
+	struct stat st;
+	if (stat("/home/web_user/BT2/.defaults-v1", &st) != 0)
+	{
+		config.cfg_StdPalNum = PAL_BLUES;
+		setPalette(palTable[PAL_BLUES], false);
+		config.interpolation = INTERPOLATION_LINEAR;
+		audio.interpolationType = INTERPOLATION_LINEAR;
+		config.specialFlags &= ~NO_VOLRAMP_FLAG;
+		audioSetVolRamp(true);
+
+		FILE *f = fopen("/home/web_user/BT2/.defaults-v1", "wb");
+		if (f != NULL)
+			fclose(f);
+	}
 
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
 }

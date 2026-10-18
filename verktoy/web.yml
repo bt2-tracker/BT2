@@ -35,22 +35,31 @@ jobs:
         id: sdlcache
         uses: actions/cache@v4
         with:
-          path: sdl-web
-          key: sdl-web-${{ env.SDL_TAG }}-${{ env.EMSDK_VERSION }}-ww1
+          path: |
+            sdl-web
+            sdl-compat
+          key: sdl-web-${{ env.SDL_TAG }}-${{ env.EMSDK_VERSION }}-v2
 
-      - name: Bygg SDL2 for nett
+      - name: Bygg SDL2 for nett (to varianter)
         if: steps.sdlcache.outputs.cache-hit != 'true'
         run: |
           git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git sdl-src
+          # lavforsinkelse-motoren: delt minne (atomics)
           emcmake cmake -S sdl-src -B sdl-build -DCMAKE_BUILD_TYPE=Release \
             -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DSDL_THREADS=OFF -DSDL_PTHREADS=OFF \
             -DCMAKE_C_FLAGS="-matomics -mbulk-memory" -DCMAKE_INSTALL_PREFIX="$PWD/sdl-web"
           cmake --build sdl-build -j4
           cmake --install sdl-build
+          # kompatibel motor: uten delt minne (Safari godtar ikke atomics da)
+          emcmake cmake -S sdl-src -B sdl-build-compat -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DSDL_THREADS=OFF -DSDL_PTHREADS=OFF \
+            -DCMAKE_INSTALL_PREFIX="$PWD/sdl-compat"
+          cmake --build sdl-build-compat -j4
+          cmake --install sdl-build-compat
 
-      - name: Bygg BerntTracker II
+      - name: Bygg Bernttracker II
         run: |
-          bash web/build_web.sh "$PWD/sdl-web" "$PWD/sdl-web" "$PWD/site"
+          bash web/build_web.sh "$PWD/sdl-web" "$PWD/sdl-compat" "$PWD/site"
           touch site/.nojekyll
           ls -la site
 

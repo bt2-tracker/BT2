@@ -789,7 +789,7 @@ static int16_t mouseYToRow(void) // used to get row num from mouse y (for patter
 	const pattCoordsMouse_t *pattCoordsMouse = &pattCoordMouseTable[config.ptnStretch][ui.pattChanScrollShown][ui.extendedPatternEditor];
 
 	// clamp mouse y to boundaries
-	const int16_t maxY = ui.pattChanScrollShown ? 382 : 396;
+	const int16_t maxY = ui.pattChanScrollShown ? (382 + SCREEN_EXTRA_H) : (396 + SCREEN_EXTRA_H);
 	const int16_t my = (int16_t)CLAMP(mouse.y, pattCoordsMouse->upperRowsY, maxY);
 
 	const uint8_t charHeight = config.ptnStretch ? 11 : 8;
@@ -915,7 +915,7 @@ void handlePatternDataMouseDown(bool mouseButtonHeld)
 	if (!songPlaying)
 	{
 		y1 = ui.extendedPatternEditor ? 71 : 176;
-		y2 = ui.pattChanScrollShown ? 382 : 396;
+		y2 = ui.pattChanScrollShown ? (382 + SCREEN_EXTRA_H) : (396 + SCREEN_EXTRA_H);
 
 		if (mouse.y < y1)
 		{

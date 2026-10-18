@@ -29,4 +29,23 @@ emcc $SRC -o "$OUT/bt2-compat.js" $COMMON \
  -I"$SDL_COMPAT/include" -L"$SDL_COMPAT/lib" -lSDL2
 
 cp web/index.html web/manifest.webmanifest web/coi-serviceworker.js web/icon-*.png "$OUT/" 2>/dev/null || true
+
+# Demo-låter: "Demo Tracks/<sjanger>/*.xm" kopieres med, og en liste lages så appen kan hente dem
+if [ -d "Demo Tracks" ]; then
+	rm -rf "$OUT/demo"
+	mkdir -p "$OUT/demo"
+	cp -r "Demo Tracks/." "$OUT/demo/"
+	python3 - "$OUT/demo" <<'PY'
+import json, os, sys
+root = sys.argv[1]
+files = []
+for d, _, names in os.walk(root):
+	for n in sorted(names):
+		if n.lower().endswith(('.xm', '.mod', '.s3m', '.it', '.xi', '.wav')):
+			rel = os.path.relpath(os.path.join(d, n), root).replace(os.sep, '/')
+			files.append({'path': rel, 'size': os.path.getsize(os.path.join(d, n))})
+json.dump({'version': 1, 'files': files}, open(os.path.join(root, 'index.json'), 'w'), indent=1)
+print('demo-filer:', len(files))
+PY
+fi
 echo "Ferdig: $OUT"
