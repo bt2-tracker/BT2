@@ -33,6 +33,7 @@
 #include "ft2_sysreqs.h"
 #include "ft2_pattern_ed.h"
 #include "mixer/ft2_mix.h"
+#include "ft2_touchkeys.h"
 
 void webScopesTick(int32_t updates); // ft2_scopes.c
 void webDiskOpStorePathsInConfig(void); // ft2_diskop.c
@@ -709,7 +710,8 @@ EMSCRIPTEN_KEEPALIVE const char *webDebugState(void)
 		"\"jump\":[%d,%d,%d,%d],\"markX1\":%d,\"markX2\":%d,\"markY1\":%d,\"markY2\":%d,"
 		"\"masterVol\":%d,\"bankOffset\":%d,\"bankSwapped\":%d,\"songLen\":%d,\"pattNum\":%d,\"muted0\":%d,"
 		"\"wavShown\":%d,\"wavRendering\":%d,"
-		"\"ptnAltLayout\":%d,\"bits16\":%d,\"bufSize\":%d,\"audioFreq\":%d,\"interp\":%d,\"volRamp\":%d,\"boost\":%d,\"haveFreq\":%d}",
+		"\"ptnAltLayout\":%d,\"bits16\":%d,\"bufSize\":%d,\"audioFreq\":%d,\"interp\":%d,\"volRamp\":%d,\"boost\":%d,\"haveFreq\":%d,"
+		"\"kbShown\":%d}",
 		row, ch, cursor.object, patt, (patt >= 0 && patt < MAX_PATTERNS) ? patternNumRows[patt] : 0, song.songPos, playMode,
 		songPlaying ? 1 : 0, editor.curOctave, editor.editRowSkip, editor.curInstr, n.note, n.instr, n.vol, n.efx, n.efxData,
 		keyb.leftCtrlPressed, keyb.leftAltPressed, keyb.leftShiftPressed, (int32_t)mod, editor.editTextFlag, ui.sysReqShown,
@@ -723,7 +725,7 @@ EMSCRIPTEN_KEEPALIVE const char *webDebugState(void)
 		config.ptnAlternativeLayout, (config.specialFlags & BITDEPTH_16) ? 1 : 0,
 		(config.specialFlags & BUFFSIZE_512) ? 512 : (config.specialFlags & BUFFSIZE_2048) ? 2048 : 1024,
 		(int32_t)config.audioFreq, config.interpolation, (config.specialFlags & NO_VOLRAMP_FLAG) ? 0 : 1,
-		config.boostLevel, (int32_t)audio.haveFreq);
+		config.boostLevel, (int32_t)audio.haveFreq, tkIsShown() ? 1 : 0);
 
 	return buf;
 }

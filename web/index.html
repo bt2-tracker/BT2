@@ -172,6 +172,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	<div class="status hidden" id="storageWarning" style="color:#F0B060">Kunne ikke lese de lagrede filene dine. For å beskytte dem lagres
 		ingenting i denne økten. Lukk appen helt og åpne den igjen.</div>
 	<div class="mode" id="pcHint" style="display:none">PC: trykk <b>Alt+Enter</b> for fullskjerm, da virker alle FT2-tastene.</div>
+	<div class="mode" id="touchHint" style="display:none">Skjermtastatur: trykk raskt med <b>to fingre</b> på FT2-skjermen (eller Ctrl+K).</div>
 	<div class="row">
 		<button class="small" id="diagButton">Lydtest</button>
 		<button class="small" id="backupButton">Sikkerhetskopi (zip)</button>
@@ -241,7 +242,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.16';
+	const BT2_VERSION = '0.17';
 	const BT2_DATE = '18.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -301,14 +302,14 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			return /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS|Android/.test(ua);
 		},
 		savedEngine() {
-			try { const e = localStorage.getItem('bt2-engine-v2'); if (BT2.ENGINES.includes(e)) return e; } catch (e) {}
+			try { const e = localStorage.getItem('bt2-engine-v3'); if (BT2.ENGINES.includes(e)) return e; } catch (e) {}
 			return '';
 		},
 		wantedEngine() {
 			let e = BT2.savedEngine();
 			if (/[?&]sp\b/.test(location.search)) e = 'sp'; // old links
 			else if (/[?&]compat\b/.test(location.search)) e = 'compat';
-			if (!e) e = 'compat'; // most stable at startup on iPad/iPhone (18.10.2026)
+			if (!e) e = 'worklet'; // the lowest delay (also with Bluetooth); switched on right after the start tap (18.10.2026)
 			if (e === 'worklet' && !BT2.hasWorklet) e = 'compat';
 			return e;
 		},
@@ -395,7 +396,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
 				// picked before the start tap: switch right after it (see deferredEngine)
 				BT2.deferredEngine = 'worklet';
-				try { localStorage.setItem('bt2-engine-v2', 'worklet'); } catch (e) {}
+				try { localStorage.setItem('bt2-engine-v3', 'worklet'); } catch (e) {}
 				BT2.showAudioMode();
 				diagUpdate();
 				return;
@@ -414,7 +415,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 				Module._webSetAudioMode(2);
 				await BT2.attachEngine('sp');
 			}
-			if (!dontRemember) { try { localStorage.setItem('bt2-engine-v2', BT2.audioMode); } catch (e) {} }
+			if (!dontRemember) { try { localStorage.setItem('bt2-engine-v3', BT2.audioMode); } catch (e) {} }
 			BT2.ctx.resume().catch(() => {});
 			if (!quiet) BT2.toast('Lyd: ' + BT2.ENGINE_NAMES[BT2.audioMode]);
 			diagUpdate();
@@ -1073,6 +1074,24 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				let seen = [];
 				try { seen = JSON.parse(new TextDecoder().decode(FS.readFile(BT2.DEMO_SEEN))); } catch (e) {}
 				const seenSet = new Set(seen);
+				// Demo songs that were taken off the web (for instance the .it songs in v0.17): remove their
+				// EMPTY placeholders, which were never opened. A file with anything in it (a demo song that was
+				// opened, or anything saved there) is never touched.
+				for (const p of seen) {
+					if (BT2.demoIndex.has(p)) continue;
+					seenSet.delete(p); // (if it comes back on the web later, it shows up again)
+					const dest = BT2.DEMO_ROOT + '/' + p;
+					try {
+						const st = FS.stat(dest);
+						if (FS.isFile(st.mode) && st.size === 0) {
+							FS.unlink(dest);
+							for (let dir = dest.slice(0, dest.lastIndexOf('/')); dir.startsWith(BT2.DEMO_ROOT + '/'); dir = dir.slice(0, dir.lastIndexOf('/'))) {
+								if (FS.readdir(dir).some((n) => n !== '.' && n !== '..')) break;
+								FS.rmdir(dir); // (an emptied artist folder)
+							}
+						}
+					} catch (e) {}
+				}
 				let added = 0;
 				for (const f of list.files) {
 					if (seenSet.has(f.path)) continue;
@@ -1083,7 +1102,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 					FS.writeFile(dest, new Uint8Array(0)); // downloaded when opened
 					added++;
 				}
-				if (seenSet.size !== seen.length) FS.writeFile(BT2.DEMO_SEEN, JSON.stringify([...seenSet]));
+				const seenNow = [...seenSet];
+				if (seenNow.length !== seen.length || seenNow.some((p, i) => p !== seen[i])) FS.writeFile(BT2.DEMO_SEEN, JSON.stringify(seenNow));
 				if (added > 0) {
 					Module._webImportDone();
 					BT2.syncFiles();
@@ -1371,6 +1391,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 		appStarted() {
 			try { if (!BT2.isApple() && !(navigator.maxTouchPoints > 0)) $('pcHint').style.display = ''; } catch (e) {}
+			try { if (navigator.maxTouchPoints > 0) $('touchHint').style.display = ''; } catch (e) {}
 			setTimeout(BT2.installDemos, 1500);
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');

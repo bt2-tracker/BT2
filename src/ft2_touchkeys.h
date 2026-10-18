@@ -1,7 +1,8 @@
 #pragma once
 
 // BerntTracker: on-screen keyboard ("Retro 2" layout) drawn below the FT2 screen.
-// Works with mouse and touch. Toggle with Ctrl+K.
+// Works with mouse and touch. Toggle with Ctrl+K or a quick two-finger tap on the FT2 screen.
+// When it is hidden, nothing is drawn below the FT2 screen (FT2 gets the whole window).
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -9,11 +10,10 @@
 
 #define TK_W 787 // keyboard width in "native" pixels (the FT2 screen is stretched to this width)
 #define TK_H 147 // keyboard height in native pixels (the FT2 screen is 400)
-#define TK_MINI_H 22 // height of the thin bar shown when the keyboard is hidden
 
 bool tkIsEnabled(void);
 bool tkIsShown(void);
-int32_t tkGetAreaHeight(void); // TK_H when shown, TK_MINI_H when hidden
+int32_t tkGetAreaHeight(void); // TK_H when shown, 0 when hidden
 void tkToggle(void); // shows/hides the keyboard and resizes the window
 
 bool tkInit(SDL_Renderer *renderer);

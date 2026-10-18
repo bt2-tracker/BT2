@@ -27,6 +27,7 @@
 #include "ft2_textboxes.h"
 #include "ft2_config.h"
 #include "ft2_unicode.h"
+#include "ft2_mouse.h"
 
 // ------------------------------------------------------------------------------------------------
 // layout
@@ -41,7 +42,7 @@ enum // what a key does
 	K_KPPLUS,     // sticky numpad '+' (instrument bank +4)
 	K_OCT_DN,
 	K_OCT_UP,
-	K_HIDE        // hides the keyboard (a thin bar with a "Keyboard" button stays)
+	K_HIDE        // hides the keyboard (a two-finger tap on the FT2 screen or Ctrl+K brings it back)
 };
 
 typedef struct tkKey_t
@@ -197,12 +198,15 @@ typedef struct pointer_t
 
 static bool shown = false, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
 
-/* "Right click" button on the thin bar: for touch screens (no right mouse button). When it's on,
-** the next tap on the FT2 screen is a right click (rename instrument, scope multi-rec, draw sample...).
+/* No bar below the FT2 screen when the keyboard is hidden (the whole screen is FT2). A quick tap
+** with two fingers on the FT2 screen shows/hides the keyboard (every corner of the FT2 screen has
+** buttons in some screen, so a corner tap would get in the way). Ctrl+K also works.
 */
-#define RCLICK_X 70
-#define RCLICK_W 104
-static bool rightClickLatch, rightClickActive;
+#define TWO_FINGER_START_MS 400 // the second finger must come within this time
+#define TWO_FINGER_TAP_MS 1000  // ... and the tap must be over within this time
+static int32_t screenFingers; // fingers down on the FT2 screen
+static uint32_t firstFingerTicks;
+static bool twoFingerTap, swallowTouchMouse;
 static uint8_t heldCount[NUM_KEYS];
 static pointer_t pointers[MAX_POINTERS];
 static uint32_t *kbBuffer;
@@ -222,7 +226,7 @@ bool tkIsShown(void)
 
 int32_t tkGetAreaHeight(void)
 {
-	return shown ? TK_H : TK_MINI_H;
+	return shown ? TK_H : 0; // (hidden: nothing below the FT2 screen)
 }
 
 bool tkMouseIsOverKeyboard(void)
@@ -720,37 +724,10 @@ static void tk_getKeyLook(int32_t i, int32_t layer, char *label, char *sub, int3
 	}
 }
 
-static void tk_drawMiniBar(void) // shown when the keyboard is hidden
-{
-	tk_fillRect(0, 0, TK_W, TK_MINI_H, COL_DESK);
-	tk_fillRect(0, 0, TK_W, 1, COL_FW_LIGHT);
-	tk_fillRect(0, 0, 1, TK_MINI_H, COL_FW_LIGHT);
-	tk_fillRect(0, TK_MINI_H-1, TK_W, 1, COL_FW_DARK);
-	tk_fillRect(TK_W-1, 0, 1, TK_MINI_H, COL_FW_DARK);
-
-	char str[32];
-	sprintf(str, "OCT %d", editor.curOctave);
-	tk_tinyText(8, 8, str, 0x7D92AA);
-
-	// "Right click" button (touch screens)
-	tk_drawButton(RCLICK_X, 2, RCLICK_W, TK_MINI_H - 4, catFill[rightClickLatch ? C_ACTIVE : C_MOD], rightClickLatch);
-	tk_bigText(RCLICK_X + 8 + (rightClickLatch ? 1 : 0), 5 + (rightClickLatch ? 1 : 0), "Right click", 0x000000);
-	tk_tinyText(TK_W - 214, 8, "CTRL+K OR TAP HERE", 0x7D92AA);
-
-	// "Keyboard" button
-	const int32_t bw = 110, bx = TK_W - bw - 3, by = 2, bh = TK_MINI_H - 4;
-	tk_drawButton(bx, by, bw, bh, catFill[C_MOD], false);
-	tk_drawGlyphRows(bx + 8, by + 4, glyphUpSmall, 4, 0x000000);
-	tk_bigText(bx + 22, by + 3, "Keyboard", 0x000000);
-}
-
 static void tk_drawKeyboard(void)
 {
 	if (!shown)
-	{
-		tk_drawMiniBar();
 		return;
-	}
 
 	const int32_t layer = tk_getLayer();
 
@@ -796,7 +773,6 @@ static uint64_t tk_getStateHash(void)
 	#define HASH(v) h = (h ^ (uint64_t)(v)) * 1099511628211ULL
 
 	HASH(shown);
-	HASH(rightClickLatch);
 	HASH(tk_getLayer());
 	HASH(shiftOn); HASH(ctrlOn); HASH(altOn); HASH(fnOn); HASH(kpPlusOn);
 	HASH(editor.curOctave);
@@ -809,7 +785,7 @@ static uint64_t tk_getStateHash(void)
 
 void tkRender(SDL_Renderer *renderer)
 {
-	if (kbTexture == NULL || kbBuffer == NULL)
+	if (kbTexture == NULL || kbBuffer == NULL || !shown)
 		return;
 
 	const uint64_t hash = tk_getStateHash();
@@ -1093,17 +1069,7 @@ static int32_t tk_findPointer(int64_t id)
 static void tk_pointerDown(int64_t id, int32_t winX, int32_t winY)
 {
 	if (!shown)
-	{
-		const int32_t lx = (kbWinRect.w > 0) ? (int32_t)(((int64_t)(winX - kbWinRect.x) * TK_W) / kbWinRect.w) : -1;
-		if (lx >= RCLICK_X && lx < RCLICK_X + RCLICK_W)
-		{
-			rightClickLatch ^= 1; // "Right click" button
-			return;
-		}
-
-		tkToggle(); // tapping the rest of the thin bar brings the keyboard back
 		return;
-	}
 
 	const int32_t key = tk_keyAt(winX, winY);
 	if (key < 0)
@@ -1143,7 +1109,7 @@ bool tkHandleEvent(SDL_Event *event)
 		case SDL_MOUSEMOTION:
 		{
 			if (event->motion.which == SDL_TOUCH_MOUSEID)
-				return false;
+				return swallowTouchMouse; // (no dragging in FT2 during a two-finger tap)
 
 			const bool over = tk_pointInKeyboard(event->motion.x, event->motion.y);
 			if (over != mouseOverKb)
@@ -1162,16 +1128,7 @@ bool tkHandleEvent(SDL_Event *event)
 		case SDL_MOUSEBUTTONDOWN:
 		{
 			if (!tk_pointInKeyboard(event->button.x, event->button.y))
-			{
-				// "Right click" button is on: this click on the FT2 screen becomes a right click
-				if (rightClickLatch && event->button.button == SDL_BUTTON_LEFT)
-				{
-					event->button.button = SDL_BUTTON_RIGHT;
-					rightClickLatch = false;
-					rightClickActive = true;
-				}
 				return false;
-			}
 
 			if (event->button.which != SDL_TOUCH_MOUSEID && event->button.button == SDL_BUTTON_LEFT)
 				tk_pointerDown(MOUSE_POINTER_ID, event->button.x, event->button.y);
@@ -1181,11 +1138,11 @@ bool tkHandleEvent(SDL_Event *event)
 
 		case SDL_MOUSEBUTTONUP:
 		{
-			if (rightClickActive && event->button.button == SDL_BUTTON_LEFT)
+			// the first finger of a two-finger tap: its tap was already taken back (see SDL_FINGERDOWN)
+			if (swallowTouchMouse && event->button.which == SDL_TOUCH_MOUSEID)
 			{
-				event->button.button = SDL_BUTTON_RIGHT; // end of the converted right click
-				rightClickActive = false;
-				return false;
+				swallowTouchMouse = false;
+				return true;
 			}
 
 			if (event->button.which != SDL_TOUCH_MOUSEID && event->button.button == SDL_BUTTON_LEFT)
@@ -1207,21 +1164,58 @@ bool tkHandleEvent(SDL_Event *event)
 			const int32_t x = (int32_t)(event->tfinger.x * winW);
 			const int32_t y = (int32_t)(event->tfinger.y * winH);
 
-			if (!tk_pointInKeyboard(x, y))
-				return false;
+			if (tk_pointInKeyboard(x, y))
+			{
+				tk_pointerDown((int64_t)event->tfinger.fingerId, x, y);
+				return true;
+			}
 
-			tk_pointerDown((int64_t)event->tfinger.fingerId, x, y);
-			return true;
+			// a finger on the FT2 screen: two of them quickly = show/hide the keyboard
+			screenFingers++;
+			if (screenFingers == 1)
+			{
+				firstFingerTicks = SDL_GetTicks();
+				twoFingerTap = false;
+			}
+			else if (screenFingers == 2 && !twoFingerTap && SDL_GetTicks() - firstFingerTicks < TWO_FINGER_START_MS)
+			{
+				twoFingerTap = true;
+
+				/* The first finger already "clicked" in FT2. Let go of it with the pointer outside
+				** the screen, so a button it pressed does nothing, and ignore its real release.
+				*/
+				if (mouse.leftButtonPressed)
+				{
+					mouse.x = mouse.y = -1000;
+					mouseButtonUpHandler(SDL_BUTTON_LEFT);
+					swallowTouchMouse = true;
+				}
+			}
+			return false;
 		}
 
 		case SDL_FINGERUP:
-			return tk_pointerUp((int64_t)event->tfinger.fingerId);
+		{
+			if (tk_pointerUp((int64_t)event->tfinger.fingerId))
+				return true;
+
+			if (screenFingers > 0 && --screenFingers == 0 && twoFingerTap)
+			{
+				twoFingerTap = false;
+				if (SDL_GetTicks() - firstFingerTicks < TWO_FINGER_TAP_MS)
+					tkToggle();
+			}
+		}
+		return false;
 
 		case SDL_WINDOWEVENT:
 		{
 			// release everything if we lose focus (a key could get stuck otherwise)
 			if (event->window.event == SDL_WINDOWEVENT_FOCUS_LOST)
 			{
+				screenFingers = 0;
+				twoFingerTap = swallowTouchMouse = false;
+
 				for (int32_t i = 0; i < MAX_POINTERS; i++)
 				{
 					if (pointers[i].active)
