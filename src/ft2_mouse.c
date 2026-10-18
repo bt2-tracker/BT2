@@ -709,7 +709,11 @@ void mouseButtonDownHandler(uint8_t mouseButton)
 	}
 
 	// mouse 0,0 = open exit dialog (also make sure the test always works in fullscreen mode)
+#ifndef __EMSCRIPTEN__ // BerntTracker (web): a web page can't quit, quitting would only freeze the program
 	if ((mouse.x == 0 && mouse.y == 0) || (video.fullscreen && (video.renderX > 0 || video.renderY > 0) && (mouse.rawX == 0 && mouse.rawY == 0)))
+#else
+	if (false)
+#endif
 	{
 		if (quitBox(false) == 1)
 			editor.throwExit = true;

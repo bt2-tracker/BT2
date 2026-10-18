@@ -51,6 +51,12 @@ button.big {
 	padding: 10px 16px; font-size: 15px; opacity: 0; transition: opacity .25s; pointer-events: none;
 }
 #toast.show { opacity: 1; }
+/* shown while the user's files can't be stored (stays until it works again) */
+#storageBanner { position: fixed; left: 50%; top: 8px; transform: translateX(-50%); z-index: 31; width: max-content;
+	max-width: min(92vw, 600px); background: #8A2A22; color: #FFF; border: 1px solid #D86A5A; border-radius: 8px;
+	padding: 8px 14px; font-size: 14px; line-height: 1.35; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,.5);
+	cursor: pointer; }
+#storageBanner.hidden { display: none; }
 #net { position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%); z-index: 30; background: #12161A;
 	color: var(--text); border: 1px solid #596169; border-radius: 8px; padding: 10px 16px; font-size: 15px; text-align: center; }
 #net .bar { margin-top: 8px; }
@@ -125,7 +131,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			den åpnes, og du velger selv om du vil oppdatere. En oppdatering endrer bare selve programmet –
 			låtene, samplene, mappene og innstillingene dine blir aldri rørt.</div>
 		<div class="appnote hidden" id="homeHint">Tips: trykk Del-knappen i Safari og velg «Legg til på Hjem-skjerm»,
-			så får du Bernttracker som eget app-ikon i fullskjerm.</div>
+			så får du Bernttracker som eget app-ikon i fullskjerm. Da tar iPaden også bedre vare på filene dine.</div>
 	</div>
 	<div class="status hidden" id="storageWarning" style="color:#F0B060">Kunne ikke lese de lagrede filene dine. For å beskytte dem lagres
 		ingenting i denne økten. Lukk appen helt og åpne den igjen.</div>
@@ -134,6 +140,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		<button class="small" id="diagButton">Lydtest</button>
 		<button class="small" id="backupButton">Sikkerhetskopi (zip)</button>
 	</div>
+	<div class="mode hidden" id="backupHint" style="color:#F0D070;max-width:560px"></div>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
 		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
@@ -163,6 +170,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 </div>
 
 <div id="toast"></div>
+<div id="storageBanner" class="hidden" role="alert"></div>
 <div id="net" class="hidden"><div id="netText"></div><div class="bar"><div id="netProgress"></div></div></div>
 <input type="file" id="importInput" multiple style="display:none">
 
@@ -172,13 +180,14 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.13';
+	const BT2_VERSION = '0.14';
 	const BT2_DATE = '18.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
 
 	const BT2 = globalThis.BT2 = {
 		lastFrame: 0,
+		nextFrameAt: 0,
 		ctx: null,
 		audioMode: '',
 		started: false,
@@ -198,7 +207,13 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 				BT2.wake = finish;
 				const tick = (t) => {
 					if (done) return;
-					if (t - BT2.lastFrame >= 15.0 || document.hidden) { BT2.lastFrame = t; finish(); }
+					// FT2 runs at 60 frames per second. Screens refresh at 60, 75, 90, 120, 144 Hz ...: take
+					// the screen refresh closest to the next 1/60 second (on average exactly 60 per second).
+					if (document.hidden || t >= BT2.nextFrameAt - 4.0) {
+						BT2.nextFrameAt = (t - BT2.nextFrameAt > 50.0) ? t + 1000 / 60 : BT2.nextFrameAt + 1000 / 60;
+						BT2.lastFrame = t;
+						finish();
+					}
 					else requestAnimationFrame(tick);
 				};
 				if (document.hidden) setTimeout(finish, 50);
@@ -311,17 +326,8 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		},
 
 		// picked in the sound test: switch right away, remember for next time
-		async switchEngine(name, quiet) {
+		async switchEngine(name, quiet, dontRemember) {
 			if (!BT2.ctx) return;
-			if (!quiet) BT2.deferredEngine = null;
-			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
-				// picked before the start tap: switch right after it (see deferredEngine)
-				BT2.deferredEngine = 'worklet';
-				try { localStorage.setItem('bt2-engine-v2', 'worklet'); } catch (e) {}
-				BT2.showAudioMode();
-				diagUpdate();
-				return;
-			}
 			if (!quiet) BT2.deferredEngine = null;
 			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
 				// picked before the start tap: switch right after it (see deferredEngine)
@@ -345,10 +351,22 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 				Module._webSetAudioMode(2);
 				await BT2.attachEngine('sp');
 			}
-			try { localStorage.setItem('bt2-engine-v2', BT2.audioMode); } catch (e) {}
+			if (!dontRemember) { try { localStorage.setItem('bt2-engine-v2', BT2.audioMode); } catch (e) {} }
 			BT2.ctx.resume().catch(() => {});
 			if (!quiet) BT2.toast('Lyd: ' + BT2.ENGINE_NAMES[BT2.audioMode]);
 			diagUpdate();
+		},
+
+		// the low-latency engine's audio thread stopped (an error in the mixer): carry on with the compatible one
+		workletFailed() {
+			if (BT2.workletDead) return;
+			BT2.workletDead = true;
+			try { if (Module._webAudioThreadDied) Module._webAudioThreadDied(); } catch (e) {}
+			BT2.hasWorklet = false; // not again in this session
+			BT2.workletNode = null;
+			if (BT2.deferredEngine === 'worklet') BT2.deferredEngine = null;
+			if (BT2.audioMode === 'worklet') BT2.switchEngine('compat', true, true);
+			BT2.toast('Lydmotoren «lav forsinkelse» stoppet – bytter til kompatibel');
 		},
 
 		engineLatencyFrames() {
@@ -472,16 +490,58 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		},
 
 		// ---------- files (stored in the browser, kept between sessions)
+		// Store the user's files in the browser (IndexedDB). Runs right after files are written (see
+		// bt2_pre.js), every 30 seconds anyway, and when the app goes to the background.
 		syncFiles() {
 			// only when the stored files were read in completely at startup (see bt2_pre.js)
-			if (!Module.bt2FS || !Module.bt2StorageOK) return;
+			if (!Module.bt2FS || !Module.bt2StorageOK || BT2.readOnly) return;
 			if (BT2.syncing) { BT2.syncAgain = true; return; }
 			BT2.syncing = true;
-			Module.bt2FS.syncfs(false, (err) => {
-				if (err) console.warn('syncfs', err);
+			Module.bt2Dirty = false;
+			BT2.lastFullSync = Date.now();
+			let finished = false;
+			const end = (err) => {
+				if (finished) return;
+				finished = true;
+				clearTimeout(watchdog);
 				BT2.syncing = false;
+				if (err) {
+					console.warn('syncfs', err);
+					Module.bt2Dirty = true; // try again
+					BT2.syncFailures = (BT2.syncFailures || 0) + 1;
+					try { Module.bt2ForgetDB(); } catch (e) {} // open the storage again next time
+					if (BT2.syncFailures >= 2) BT2.storageBanner('sync');
+					clearTimeout(BT2.syncRetryTimer);
+					BT2.syncRetryTimer = setTimeout(() => BT2.syncFiles(), BT2.syncFailures < 4 ? 1500 : 15000);
+				} else {
+					BT2.syncFailures = 0;
+					if (BT2.bannerKind === 'sync') BT2.storageBanner(null);
+				}
 				if (BT2.syncAgain) { BT2.syncAgain = false; BT2.syncFiles(); }
-			});
+			};
+			// never wait forever (an answer that never comes would stop all later saving)
+			const watchdog = setTimeout(() => end(new Error('no answer from storage')), 60000);
+			try { Module.bt2FS.syncfs(false, end); } catch (e) { end(e); }
+		},
+		syncSoon() {
+			if (BT2.syncSoonTimer) return;
+			BT2.syncSoonTimer = setTimeout(() => { BT2.syncSoonTimer = 0; BT2.syncFiles(); }, 300);
+		},
+		syncIfChanged() { // from the program every few seconds
+			if (Module.bt2Dirty || Date.now() - (BT2.lastFullSync || 0) > 30000) BT2.syncFiles();
+		},
+		// the red message at the top: 'sync' (saving fails right now), 'load' (stored files couldn't be read),
+		// 'readonly' (the app is open somewhere else), or null
+		bannerKind: null,
+		storageBanner(kind) {
+			const b = $('storageBanner');
+			BT2.bannerKind = kind;
+			clearTimeout(BT2.bannerTimer);
+			if (!kind) { b.classList.add('hidden'); return; }
+			b.textContent = kind === 'sync' ? '⚠ Filene dine blir ikke lagret akkurat nå. Prøver igjen … (trykk her for å prøve med en gang)'
+				: kind === 'load' ? '⚠ De lagrede filene dine kunne ikke leses, så ingenting lagres i denne økten. Lukk appen helt og åpne den igjen.'
+				: '⚠ Appen er åpen et annet sted. Denne kopien lagrer ingenting – bruk den andre, eller lukk den og åpne denne på nytt.';
+			b.classList.remove('hidden');
 		},
 
 		toast(msg) {
@@ -521,6 +581,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const FS = Module.bt2FS;
 			const dir = BT2.importDir();
 			let n = 0, zips = 0;
+			BT2.lastImportPaths = [];
 			for (const f of files) {
 				try {
 					const data = new Uint8Array(await f.arrayBuffer());
@@ -563,7 +624,9 @@ registerProcessor('bt2-queue', BT2Queue);`;
 						}
 						zips++;
 					} else {
-						FS.writeFile(BT2.uniquePath(dir + '/' + BT2.cleanName(f.name)), data);
+						const dest = BT2.uniquePath(dir + '/' + BT2.cleanName(f.name));
+						FS.writeFile(dest, data);
+						BT2.lastImportPaths.push(dest);
 						n++;
 					}
 				} catch (e) { console.error('import', f.name, e); BT2.toast('Kunne ikke importere ' + f.name); }
@@ -740,6 +803,31 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const name = 'Bernttracker-sikkerhetskopi-' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '.zip';
 			BT2.saveOrShare(new File([BT2.zipCreate(files)], name, { type: 'application/zip' }));
 			BT2.toast(files.length + ' filer i sikkerhetskopien');
+			try { localStorage.setItem('bt2-last-backup', String(Date.now())); } catch (e) {}
+			$('backupHint').classList.add('hidden');
+		},
+		// on the start screen: a reminder when the user has own files and no backup in the last 14 days
+		backupReminder() {
+			const FS = Module.bt2FS;
+			if (!FS) return;
+			let own = 0;
+			const walk = (dir) => {
+				for (const n of FS.readdir(dir)) {
+					if (n === '.' || n === '..' || n[0] === '.') continue;
+					const p = dir + '/' + n, st = FS.stat(p);
+					if (FS.isDir(st.mode)) { if (p !== BT2.DEMO_ROOT) walk(p); }
+					else if (st.size > 0) own++;
+				}
+			};
+			walk(BT2.USER_ROOT);
+			if (!own) return;
+			let last = 0;
+			try { last = +localStorage.getItem('bt2-last-backup') || 0; } catch (e) {}
+			const days = last ? Math.floor((Date.now() - last) / 864e5) : -1;
+			if (days >= 0 && days < 14) return;
+			$('backupHint').textContent = (days < 0 ? 'Du har ' + own + (own === 1 ? ' egen fil' : ' egne filer') + ' og ingen sikkerhetskopi ennå.'
+				: 'Det er ' + days + ' dager siden forrige sikkerhetskopi.') + ' Trykk «Sikkerhetskopi (zip)» og lagre den i Filer eller iCloud.';
+			$('backupHint').classList.remove('hidden');
 		},
 
 		// called every frame from the program: where the FT2 screen is (for the Imp./Exp. buttons)
@@ -974,6 +1062,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		storageFailed(msg) {
 			BT2.storageProblem = true;
 			$('storageWarning').classList.remove('hidden');
+			BT2.storageBanner('load');
 		},
 
 		// ---------- the app on the device (offline start) and updates
@@ -1089,6 +1178,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');
 			BT2.starfield.kick();
+			try { BT2.backupReminder(); } catch (e) { console.warn('backup reminder', e); }
 			BT2.showAudioMode();
 		},
 	};
@@ -1185,7 +1275,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// that FT2 uses (Alt opens browser menus on Windows, Space/Enter press focused buttons, ...).
 	// AltGr on Windows keyboards also reports a (fake) left Ctrl; remember while it is held
 	let altGrHeld = false;
-	const modFlags = (e) => (e.ctrlKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | (e.metaKey ? 8 : 0) |
+	// (Cmd only counts on Apple keyboards: the Windows key does nothing in FT2)
+	const modFlags = (e) => (e.ctrlKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | ((e.metaKey && BT2.isApple()) ? 8 : 0) |
 		((altGrHeld || (e.getModifierState && e.getModifierState('AltGraph'))) ? 16 : 0);
 	const overlayOpen = () => !$('start').classList.contains('hidden') || !$('loading').classList.contains('hidden');
 	const ready = () => typeof Module._webSyncModifiers === 'function';
@@ -1194,9 +1285,36 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	const logKey = (e) => {
 		BT2.keyLog.push((e.type === 'keydown' ? '↓ ' : '↑ ') + (e.code || '?') + '  «' + e.key + '»  ' + e.keyCode +
 			(e.repeat ? ' (gjentatt)' : ''));
-		if (BT2.keyLog.length > 6) BT2.keyLog.shift();
+		if (BT2.keyLog.length > 12) BT2.keyLog.shift();
 		diagUpdate();
 	};
+	// Keys the program would miss: SDL drops a key when the browser gives it no "code" (Safari on iPad
+	// does that for some keys on some Bluetooth keyboards, e.g. Delete). Such keys are passed on here,
+	// found from the key's name or number instead.
+	const SC_BY_KEY = { Delete: 76, Del: 76, Backspace: 42, Insert: 73, Home: 74, End: 77, PageUp: 75, PageDown: 78,
+		ArrowRight: 79, ArrowLeft: 80, ArrowDown: 81, ArrowUp: 82, Enter: 40, Escape: 41, Tab: 43, ' ': 44, CapsLock: 57 };
+	const SC_BY_KEYCODE = { 46: 76, 8: 42, 45: 73, 36: 74, 35: 77, 33: 75, 34: 78, 39: 79, 37: 80, 40: 81, 38: 82,
+		13: 40, 27: 41, 9: 43, 32: 44, 20: 57 };
+	for (let i = 1; i <= 12; i++) SC_BY_KEY['F' + i] = 57 + i; // F1 = 58 ... F12 = 69
+	// Fn combinations on compact and iPad keyboards: the key's name says what it is, the position
+	// ("code") says which key was pressed. Fn+Backspace = Delete must reach FT2 as Delete.
+	const NAV_BY_KEY = { Delete: 76, Insert: 73, Home: 74, End: 77, PageUp: 75, PageDown: 78 };
+	const fallbackScancode = (e) => {
+		if (NAV_BY_KEY[e.key] && e.code && e.code !== e.key && e.location !== 3 && !/^Numpad/.test(e.code))
+			return NAV_BY_KEY[e.key]; // (not the number pad: FT2 uses those keys there)
+		if (e.code && e.code !== 'Unidentified') return 0; // the program knows this key
+		if (SC_BY_KEY[e.key]) return SC_BY_KEY[e.key];
+		const k = e.keyCode | 0;
+		if (SC_BY_KEYCODE[k]) return SC_BY_KEYCODE[k];
+		if (k >= 65 && k <= 90) return 4 + (k - 65); // A-Z
+		if (k >= 49 && k <= 57) return 30 + (k - 49); // 1-9
+		if (k === 48) return 39; // 0
+		if (k >= 112 && k <= 123) return 58 + (k - 112); // F1-F12
+		return 0;
+	};
+	BT2.fallbackScancode = fallbackScancode;
+	const injectedKeys = {};
+
 	const onKey = (e) => {
 		if (!e.isTrusted) return;
 		if (!$('diag').classList.contains('hidden')) {
@@ -1206,6 +1324,10 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			return;
 		}
 		if (!ready()) return;
+		if (!BT2.isApple() && (e.key === 'Meta' || e.key === 'OS' || /^(Meta|OS)(Left|Right)$/.test(e.code))) {
+			e.stopImmediatePropagation(); // the Windows key: nothing in FT2 (Windows uses it for the Start menu)
+			return;
+		}
 		if (e.code === 'AltRight')
 			altGrHeld = e.type === 'keydown' && !BT2.isApple() &&
 				(e.ctrlKey || e.key === 'AltGraph' || (e.getModifierState && e.getModifierState('AltGraph')));
@@ -1219,6 +1341,19 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			else {
 				if (capsDownState !== null && st !== capsDownState) Module._webTapKey(57); // SDL_SCANCODE_CAPSLOCK
 				capsDownState = null;
+			}
+		}
+
+		if (!overlayOpen()) {
+			// a key passed on here is also released here, with the same key number (even if its name changed)
+			const id = e.code || ('#' + e.keyCode);
+			const sc = (e.type === 'keyup' && injectedKeys[id]) || fallbackScancode(e);
+			if (sc) {
+				if (e.type === 'keydown') injectedKeys[id] = sc; else delete injectedKeys[id];
+				Module._webKeyEvent(sc, e.type === 'keydown' ? 1 : 0);
+				e.stopImmediatePropagation();
+				if (Module._webIsEditingText() === 0) e.preventDefault(); // (while typing text: keep the letter for the text box)
+				return;
 			}
 		}
 
@@ -1290,7 +1425,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 		const FS = Module.bt2FS, dir = BT2.importDir();
 		const plain = [];
-		let n = 0;
+		let n = 0, written = null;
+		BT2.lastImportPaths = [];
 		for (const { file, rel } of files) {
 			if (!rel.includes('/')) { plain.push(file); continue; }
 			try { // a dropped folder keeps its folders
@@ -1298,19 +1434,16 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				const dest = BT2.uniquePath(dir + '/' + parts.join('/'));
 				BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
 				FS.writeFile(dest, new Uint8Array(await file.arrayBuffer()));
+				written = dest;
 				n++;
 			} catch (err) { console.error('drop', rel, err); }
 		}
-		if (plain.length) n += await BT2.importFiles(plain);
+		if (plain.length) { n += await BT2.importFiles(plain); written = BT2.lastImportPaths[0] || written; }
 		else { Module._webImportDone(); BT2.syncFiles(); BT2.toast('Kopierte ' + n + ' filer'); }
 
-		// one song/instrument/sample dropped: open it too (like FT2 does)
-		if (files.length === 1 && !/\.zip$/i.test(files[0].file.name)) {
-			const path = dir + '/' + BT2.cleanName(files[0].file.name);
-			const all = FS.readdir(dir).filter((x) => x.startsWith(BT2.cleanName(files[0].file.name).replace(/\.[^.]*$/, '')));
-			const newest = all.map((x) => dir + '/' + x).sort((a, b) => FS.stat(b).mtime - FS.stat(a).mtime)[0] || path;
-			Module.ccall('webLoadFile', null, ['string'], [newest]);
-		}
+		// one song/instrument/sample dropped: open it too (like FT2 does) - exactly the file that was written
+		if (files.length === 1 && n === 1 && written && !/\.zip$/i.test(files[0].file.name))
+			Module.ccall('webLoadFile', null, ['string'], [written]);
 	});
 
 	// give the keyboard back to the program after closing an overlay (a focused button would take Space/Enter)
@@ -1381,6 +1514,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	$('backupButton').addEventListener('click', () => { if (Module.bt2FS) BT2.backup(); });
 	$('updateNow').addEventListener('click', () => BT2.appUpdate());
 	$('updateLater').addEventListener('click', () => $('updateBox').classList.add('hidden'));
+	$('storageBanner').addEventListener('click', () => {
+		const kind = BT2.bannerKind;
+		if (kind === 'sync') { BT2.toast('Prøver å lagre …'); BT2.syncFiles(); return; }
+		$('storageBanner').classList.add('hidden');
+		BT2.bannerTimer = setTimeout(() => { if (BT2.bannerKind === kind) BT2.storageBanner(kind); }, 120000);
+	});
 	BT2.appCheck();
 
 	$('diagButton').addEventListener('click', () => { if (BT2.ctx) BT2.ctx.resume().catch(() => {}); $('diag').classList.remove('hidden'); diagUpdate(); });
@@ -1477,7 +1616,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	};
 	$('retry').addEventListener('click', () => location.reload());
 	$('alreadyOpenRetry').addEventListener('click', () => location.reload());
-	$('alreadyOpenAnyway').addEventListener('click', startLoading);
+	$('alreadyOpenAnyway').addEventListener('click', () => { BT2.readOnly = true; BT2.storageBanner('readonly'); startLoading(); });
 
 	// Only one copy of the program at a time (two copies would each have their own view of the files)
 	if (navigator.locks && navigator.locks.request) {

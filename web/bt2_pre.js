@@ -8,6 +8,9 @@
 //  - Writing back never deletes a stored file or folder that was not deleted by the user in
 //    this session (Disk Op "Delete"/"Rename"), and never replaces a stored file with an older
 //    copy (e.g. the app open in two tabs at the same time).
+//  - Changes are stored right after a file is written (not only every few seconds), a failed
+//    write is reported to the page (which warns and tries again), and a lost connection to the
+//    browser's storage is opened again.
 
 // the page reads the mixed sound through this (always the current memory view)
 Module['bt2HeapF32'] = function () { return HEAPF32; };
@@ -22,6 +25,14 @@ Module['preRun'].push(function () {
 
 	// ---- remember what the user deletes/renames in this session (only those may be removed from storage)
 	var deleted = [];
+	var USER = '/home/web_user';
+	var inUser = function (p) { return p === USER || p.indexOf(USER + '/') === 0; };
+	// something in the user's files changed: store it soon
+	var changed = function (p) {
+		if (!inUser(p)) return;
+		Module['bt2Dirty'] = true;
+		if (globalThis.BT2 && globalThis.BT2.syncSoon) globalThis.BT2.syncSoon();
+	};
 	var absPath = function (p) {
 		p = String(p);
 		if (p.charAt(0) !== '/')
@@ -48,6 +59,7 @@ Module['preRun'].push(function () {
 			var p = absPath(getPath(arguments));
 			var r = orig.apply(this, arguments);
 			deleted.push(p);
+			changed(p);
 			return r;
 		};
 	};
@@ -55,6 +67,42 @@ Module['preRun'].push(function () {
 	wrap('rmdir', function (a) { return a[0]; });
 	wrap('rename', function (a) { return a[0]; }); // the old name disappears
 	Module['bt2Deleted'] = deleted;
+
+	// a renamed file/folder gets "now" as its time, so it is always stored under the new name
+	// (an older stored file with that name, deleted earlier in this session, must not win)
+	var origRename = FS.rename;
+	FS.rename = function (oldPath, newPath) {
+		var r = origRename.apply(this, arguments);
+		try {
+			var now = Date.now();
+			var touch = function (p) {
+				FS.utime(p, now, now);
+				if (FS.isDir(FS.stat(p).mode))
+					FS.readdir(p).forEach(function (n) { if (n !== '.' && n !== '..') touch(p + '/' + n); });
+			};
+			touch(absPath(newPath));
+		} catch (e) {}
+		changed(absPath(newPath));
+		return r;
+	};
+
+	// other changes: written files (closed after writing), new folders, changed times
+	var origClose = FS.close;
+	FS.close = function (stream) {
+		var writing = stream && stream.path && (stream.flags & 3) !== 0; // opened for writing (O_WRONLY/O_RDWR)
+		var r = origClose.apply(this, arguments);
+		if (writing) changed(absPath(stream.path));
+		return r;
+	};
+	['mkdir', 'truncate', 'utime', 'chmod', 'symlink'].forEach(function (name) {
+		var orig = FS[name];
+		if (!orig) return;
+		FS[name] = function (p) {
+			var r = orig.apply(this, arguments);
+			if (typeof p === 'string') changed(absPath(name === 'symlink' ? arguments[1] : p));
+			return r;
+		};
+	});
 
 	// ---- the Modland library (/Modland) is filled in folder by folder, when a folder is first listed
 	var origReaddir = FS.readdir;
@@ -66,11 +114,82 @@ Module['preRun'].push(function () {
 		return origReaddir.apply(this, arguments);
 	};
 
+	// ---- the connection to IndexedDB: when the browser closes it (Safari: "Connection to Indexed
+	// Database server lost", e.g. after a while in the background), forget it so the next save opens a new one
+	var origGetDB = IDBFS.getDB;
+	IDBFS.getDB = function (name, callback) {
+		origGetDB(name, function (err, db) {
+			if (!err && db && !db.bt2Watched) {
+				db.bt2Watched = true;
+				var forget = function () { if (IDBFS.dbs[name] === db) delete IDBFS.dbs[name]; };
+				db.onclose = forget;
+				db.onversionchange = function () { try { db.close(); } catch (e) {} forget(); };
+			}
+			callback(err, db);
+		});
+	};
+	Module['bt2ForgetDB'] = function () {
+		Object.keys(IDBFS.dbs).forEach(function (k) { try { IDBFS.dbs[k].close(); } catch (e) {} delete IDBFS.dbs[k]; });
+	};
+
+	// ---- the transfer between memory and IndexedDB. Like Emscripten's own, but it always reports
+	// back exactly once: when the transaction is done, fails, or is aborted (e.g. the storage is full).
+	// Emscripten's version never reports an abort, and then nothing would be stored for the rest of
+	// the session.
+	var transfer = function (src, dst, callback) {
+		var create = [], remove = [];
+		Object.keys(src.entries).forEach(function (key) {
+			var e = src.entries[key], e2 = dst.entries[key];
+			if (!e2 || e.timestamp.getTime() != e2.timestamp.getTime()) create.push(key);
+		});
+		Object.keys(dst.entries).forEach(function (key) { if (!src.entries[key]) remove.push(key); });
+		if (!create.length && !remove.length) return callback(null);
+
+		var finished = false, firstError = null;
+		var finish = function (err) { if (!finished) { finished = true; callback(err || null); } };
+		var note = function (err) { if (err && !firstError) firstError = err; };
+		var db = src.type === 'remote' ? src.db : dst.db;
+		var transaction;
+		try {
+			transaction = db.transaction([IDBFS.DB_STORE_NAME], 'readwrite');
+		} catch (e) {
+			return finish(e); // e.g. the connection was closed
+		}
+		var store = transaction.objectStore(IDBFS.DB_STORE_NAME);
+		transaction.oncomplete = function () { finish(firstError); };
+		transaction.onabort = function () { finish(transaction.error || firstError || new Error('IndexedDB transaction aborted')); };
+		transaction.onerror = function (e) { note((e && e.target && e.target.error) || transaction.error); if (e) e.preventDefault(); };
+
+		try {
+			// folders before the files in them
+			create.sort().forEach(function (path) {
+				if (dst.type === 'local') {
+					IDBFS.loadRemoteEntry(store, path, function (err, entry) {
+						if (err) return note(err);
+						IDBFS.storeLocalEntry(path, entry, note);
+					});
+				} else {
+					IDBFS.loadLocalEntry(path, function (err, entry) {
+						if (err) return note(err);
+						IDBFS.storeRemoteEntry(store, path, entry, note);
+					});
+				}
+			});
+			// files before their folders
+			remove.sort().reverse().forEach(function (path) {
+				if (dst.type === 'local') IDBFS.removeLocalEntry(path, note);
+				else IDBFS.removeRemoteEntry(store, path, note);
+			});
+		} catch (e) {
+			note(e);
+			try { transaction.abort(); } catch (e2) { finish(e); }
+		}
+	};
+
 	// ---- safer write-back to IndexedDB
-	var origReconcile = IDBFS.reconcile;
 	IDBFS.reconcile = function (src, dst, callback) {
 		if (dst.type !== 'remote')
-			return origReconcile.apply(this, arguments); // reading from storage: unchanged
+			return transfer(src, dst, callback); // reading from storage: everything as stored
 
 		var entries = {};
 		Object.keys(src.entries).forEach(function (k) { entries[k] = src.entries[k]; });
@@ -84,7 +203,7 @@ Module['preRun'].push(function () {
 			}
 		});
 
-		return origReconcile.call(this, { type: src.type, entries: entries }, dst, callback);
+		return transfer({ type: src.type, entries: entries }, dst, callback);
 	};
 
 	FS.mount(IDBFS, {}, '/home/web_user');

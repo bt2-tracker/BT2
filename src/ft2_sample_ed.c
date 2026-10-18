@@ -1703,6 +1703,11 @@ void saveRange(void)
 		return;
 	}
 
+#ifdef __EMSCRIPTEN__
+	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
+		return;
+#endif
+
 	switch (editor.sampleSaveMode)
 	{
 		         case SMP_SAVE_MODE_RAW: changeFilenameExt(smpEd_SysReqText, ".raw", sizeof (smpEd_SysReqText) - 1); break;

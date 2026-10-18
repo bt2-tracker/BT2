@@ -543,10 +543,11 @@ static int32_t scopeThreadFunc(void *ptr)
 }
 
 #ifdef __EMSCRIPTEN__
-void webScopesTick(void) // BerntTracker: no scope thread on the web, updated once per frame instead
+void webScopesTick(int32_t updates) // BerntTracker: no scope thread on the web, updated from the frame loop instead
 {
 	editor.scopeThreadBusy = true;
-	updateScopes();
+	for (int32_t i = 0; i < updates; i++)
+		updateScopes(); // each update moves the scopes 1/64 second (SCOPE_HZ)
 	editor.scopeThreadBusy = false;
 }
 #endif

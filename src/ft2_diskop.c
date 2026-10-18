@@ -608,6 +608,15 @@ static bool renameAnsi(UNICHAR *oldNameU, char *newName)
 	if (newNameU == NULL)
 		return false;
 
+#ifdef __EMSCRIPTEN__
+	struct stat st;
+	if (stat(newNameU, &st) == 0) // BerntTracker (web): like FT2 on Windows, never rename onto an existing name
+	{
+		free(newNameU);
+		return false;
+	}
+#endif
+
 	retVal = UNICHAR_RENAME(oldNameU, newNameU);
 	free(newNameU);
 
@@ -631,6 +640,15 @@ static void openDirectory(UNICHAR *strU)
 
 bool diskOpGoParent(void)
 {
+#ifdef __EMSCRIPTEN__
+	char cwdTmp[PATH_MAX];
+	if (getcwd(cwdTmp, sizeof (cwdTmp)) != NULL && strcmp(cwdTmp, WEB_MODLAND_ROOT) == 0 && chdir(WEB_USER_ROOT) == 0)
+	{
+		editor.diskOpReadDir = true;
+		FReq_EntrySelected = -1;
+		return true;
+	}
+#endif
 	if (chdir("..") == 0)
 	{
 		editor.diskOpReadDir = true;
@@ -940,6 +958,11 @@ static void diskOpSave(bool checkOverwrite)
 		return;
 	}
 
+#ifdef __EMSCRIPTEN__
+	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
+		return;
+#endif
+
 	switch (FReq_Item)
 	{
 		default:
@@ -1122,6 +1145,13 @@ static void fileListPressed(int32_t index)
 		// delete file/folder
 		case MOUSE_MODE_DELETE:
 		{
+#ifdef __EMSCRIPTEN__
+			if (webDiskOpReadOnlyHere())
+			{
+				okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
+				break;
+			}
+#endif
 			if (!dirEntry->isDir || UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR)) // don't handle ".." dir
 			{
 				nameTmp = unicharToCp850(dirEntry->nameU, true);
@@ -1163,6 +1193,13 @@ static void fileListPressed(int32_t index)
 		// rename file/folder
 		case MOUSE_MODE_RENAME:
 		{
+#ifdef __EMSCRIPTEN__
+			if (webDiskOpReadOnlyHere())
+			{
+				okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
+				break;
+			}
+#endif
 			if (dirEntry->isDir || UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR)) // don't handle ".." dir
 			{
 				nameTmp = unicharToCp850(dirEntry->nameU, true);
@@ -2468,6 +2505,13 @@ void pbDiskOpRename(void)
 
 void pbDiskOpMakeDir(void)
 {
+#ifdef __EMSCRIPTEN__
+	if (webDiskOpReadOnlyHere())
+	{
+		okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
+		return;
+	}
+#endif
 	FReq_NameTemp[0] = '\0';
 	if (inputBox(1, "Enter directory name:", FReq_NameTemp, PATH_MAX) == 1)
 	{
@@ -2678,7 +2722,11 @@ const char *webDiskOpGetFilePath(void) // current folder + the filename in the "
 	if (FReq_CurPathU == NULL || FReq_FileName == NULL || FReq_FileName[0] == '\0')
 		return path;
 
-	snprintf(path, sizeof (path), "%s/%s", FReq_CurPathU, FReq_FileName);
+	char *fileNameU = cp850ToUtf8(FReq_FileName); // the "File:" box is CP850 ("æøå"), the folder is UTF-8
+	snprintf(path, sizeof (path), "%s/%s", FReq_CurPathU, (fileNameU != NULL) ? fileNameU : FReq_FileName);
+	if (fileNameU != NULL)
+		free(fileNameU);
+
 	return path;
 }
 #endif

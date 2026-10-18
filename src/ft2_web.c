@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h> // getcwd(), chdir()
+#include <limits.h>
 #include <emscripten.h>
 #ifdef BT2_WEB_WORKLET
 #include <emscripten/webaudio.h>
@@ -28,10 +30,11 @@
 #include "ft2_tables.h"
 #include "ft2_keyboard.h"
 #include "ft2_replayer.h"
+#include "ft2_sysreqs.h"
 #include "ft2_pattern_ed.h"
 #include "mixer/ft2_mix.h"
 
-void webScopesTick(void); // ft2_scopes.c
+void webScopesTick(int32_t updates); // ft2_scopes.c
 void webDiskOpStorePathsInConfig(void); // ft2_diskop.c
 const char *webDiskOpGetFilePath(void); // ft2_diskop.c
 bool webDiskOpIsShown(void);
@@ -123,7 +126,7 @@ EM_JS(int32_t, bt2_engineLatencyFrames, (void), {
 
 static EMSCRIPTEN_WEBAUDIO_T audioCtx;
 static volatile int32_t audioLockState; // 0 = free, 1 = main thread, 2 = audio thread
-static volatile int32_t audioReady, audioFailed, workletStarted;
+static volatile int32_t audioReady, audioFailed, workletStarted, audioThreadDead;
 static float interleaved[QUANTUM * 2];
 static volatile uint64_t framesRendered;
 static volatile uint32_t anchorSeq;
@@ -145,13 +148,22 @@ static EM_BOOL processAudio(int numInputs, const AudioSampleFrame *inputs, int n
 	float *outL = outputs[0].data;
 	float *outR = outputs[0].data + QUANTUM;
 
+	bool mixed = false;
 	int32_t expected = 0;
-	if (audioMode == 0 && !audioIsPaused &&
+	if (audioMode == 0 && !audioIsPaused && !audioThreadDead &&
 		__atomic_compare_exchange_n(&audioLockState, &expected, 2, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
 	{
-		audioCb(NULL, (Uint8 *)interleaved, QUANTUM * 2 * sizeof (float));
+		// check again now that we hold the lock (the main thread may have paused/switched in between)
+		if (audioMode == 0 && !audioIsPaused && audioCb != NULL)
+		{
+			audioCb(NULL, (Uint8 *)interleaved, QUANTUM * 2 * sizeof (float));
+			mixed = true;
+		}
 		__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
+	}
 
+	if (mixed)
+	{
 		for (int32_t i = 0; i < QUANTUM; i++)
 		{
 			outL[i] = interleaved[(i << 1) + 0];
@@ -222,7 +234,11 @@ static void onProcessorCreated(EMSCRIPTEN_WEBAUDIO_T ctx, EM_BOOL success, void 
 	options.outputChannelCounts = outputChannelCounts;
 
 	EMSCRIPTEN_AUDIO_WORKLET_NODE_T node = emscripten_create_wasm_audio_worklet_node(ctx, "bt2-mixer", &options, processAudio, NULL);
-	EM_ASM({ globalThis.BT2.workletNode = emscriptenGetAudioObject($0); }, node);
+	EM_ASM({
+		const node = emscriptenGetAudioObject($0);
+		globalThis.BT2.workletNode = node;
+		node.addEventListener('processorerror', () => globalThis.BT2.workletFailed()); // the audio thread stopped (an error in the mixer)
+	}, node);
 	workletDone(1);
 }
 
@@ -254,13 +270,42 @@ EMSCRIPTEN_KEEPALIVE void webStartWorkletThread(void) // called from JS when swi
 	emscripten_start_wasm_audio_worklet_thread_async(audioCtx, audioThreadStack, sizeof (audioThreadStack), onAudioThreadStarted, NULL);
 }
 
+EM_JS(void, bt2_workletFailed, (void), { setTimeout(() => globalThis.BT2.workletFailed(), 0); });
+
+// called from JS when the audio thread has stopped (processorerror): it can never let go of the lock then
+EMSCRIPTEN_KEEPALIVE void webAudioThreadDied(void)
+{
+	audioThreadDead = 1;
+	int32_t expected = 2;
+	__atomic_compare_exchange_n(&audioLockState, &expected, 0, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+}
+
 void webAudioLock(void)
 {
 	if (mainLockDepth++ == 0)
 	{
+		double waitStart = 0.0;
 		int32_t expected = 0;
 		while (!__atomic_compare_exchange_n(&audioLockState, &expected, 1, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
-			expected = 0; // the audio thread holds it for well under a millisecond
+		{
+			// the audio thread holds it for well under a millisecond. If it holds it for a whole second,
+			// it has stopped (an error on the audio thread): take over instead of freezing the program,
+			// and switch to the compatible engine.
+			const double now = emscripten_get_now();
+			if (waitStart == 0.0)
+			{
+				waitStart = now;
+			}
+			else if (now - waitStart > 1000.0)
+			{
+				audioThreadDead = 1;
+				__atomic_store_n(&audioLockState, 1, __ATOMIC_RELEASE);
+				bt2_workletFailed();
+				break;
+			}
+
+			expected = 0;
+		}
 	}
 }
 
@@ -403,7 +448,10 @@ void webAudioPause(bool pause)
 	if (!pause && audioMode == 0)
 		updateAudioClockAnchor();
 
+	// under the lock: when this returns, the mixer is not running, and it won't start while paused
+	webAudioLock();
 	audioIsPaused = pause ? 1 : 0;
+	webAudioUnlock();
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -450,6 +498,13 @@ EMSCRIPTEN_KEEPALIVE void webTapKey(int32_t scancode)
 {
 	pushKey((SDL_Scancode)scancode, true);
 	pushKey((SDL_Scancode)scancode, false);
+}
+
+// a key press or release from the page: keys that SDL would drop (no usable "code" from the browser,
+// e.g. Delete on some Bluetooth keyboards on iPad). See the keyboard layer in index.html.
+EMSCRIPTEN_KEEPALIVE void webKeyEvent(int32_t scancode, int32_t down)
+{
+	pushKey((SDL_Scancode)scancode, down != 0);
 }
 
 /* Called from the page for every key and pointer event, with the modifier keys the browser says
@@ -589,13 +644,105 @@ void webLongTaskYield(void)
 }
 
 // ------------------------------------------------------------------------------------------------
+// FT2 waits in a loop until the mixer has started a voice (Smp. Ed. Wave/Range/Display, filter preview).
+// The compatible engines mix on this same thread between frames, so that loop would never end. Wait by
+// letting the browser run instead (then the mixer gets its turn), and never for long.
+
+void webWaitVoiceTrigger(volatile uint8_t *status)
+{
+	const uint32_t start = SDL_GetTicks();
+	while ((*status & CS_TRIGGER_VOICE) && (SDL_GetTicks() - start) < 300)
+		SDL_Delay(1);
+}
+
+// ------------------------------------------------------------------------------------------------
 // files
 
 EM_JS(void, bt2_syncFiles, (void), { globalThis.BT2.syncFiles(); });
+EM_JS(void, bt2_syncIfChanged, (void), { globalThis.BT2.syncIfChanged(); });
+EM_JS(void, bt2_toast, (const char *msg), { if (globalThis.BT2 && globalThis.BT2.toast) globalThis.BT2.toast(UTF8ToString(msg)); });
 
 void webSyncFiles(void)
 {
 	bt2_syncFiles();
+}
+
+static bool pathInside(const char *path, const char *root)
+{
+	const size_t n = strlen(root);
+	return strncmp(path, root, n) == 0 && (path[n] == '\0' || path[n] == '/');
+}
+
+static bool makeDirs(const char *path) // like "mkdir -p"
+{
+	char tmp[PATH_MAX];
+	snprintf(tmp, sizeof (tmp), "%s", path);
+	for (char *p = tmp + 1; *p != '\0'; p++)
+	{
+		if (*p == '/')
+		{
+			*p = '\0';
+			mkdir(tmp, 0777);
+			*p = '/';
+		}
+	}
+	mkdir(tmp, 0777);
+
+	struct stat st;
+	return stat(tmp, &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+bool webDiskOpReadOnlyHere(void)
+{
+	char cwd[PATH_MAX];
+	return getcwd(cwd, sizeof (cwd)) != NULL && pathInside(cwd, WEB_MODLAND_ROOT);
+}
+
+/* Only /home/web_user is stored in the browser. The Modland library (/Modland) is kept in memory,
+** so a file saved there would be gone after a restart. Save it in the user's own copy of that
+** folder instead (BT2/Modland/..., where songs opened from Modland are kept too), and say so.
+*/
+bool webDiskOpPrepareSaveDir(void)
+{
+	char cwd[PATH_MAX], dest[PATH_MAX];
+	if (getcwd(cwd, sizeof (cwd)) == NULL)
+		cwd[0] = '\0';
+
+	if (pathInside(cwd, "/home/web_user"))
+		return true;
+
+	const bool fromModland = pathInside(cwd, WEB_MODLAND_ROOT);
+	if (fromModland && !pathInside(cwd, WEB_MODLAND_SEARCH_DIR))
+		snprintf(dest, sizeof (dest), "%s/Modland%s", WEB_USER_ROOT, cwd + strlen(WEB_MODLAND_ROOT));
+	else if (fromModland)
+		snprintf(dest, sizeof (dest), "%s/Modland", WEB_USER_ROOT);
+	else
+		snprintf(dest, sizeof (dest), "%s", WEB_USER_ROOT);
+
+	if (!makeDirs(dest) || chdir(dest) != 0)
+	{
+		okBox(0, "System message", "Can't save here! Go to one of your own folders first.", NULL);
+		return false;
+	}
+
+	editor.diskOpReadDir = true; // show the folder the file goes to
+
+	char msg[PATH_MAX + 80];
+	snprintf(msg, sizeof (msg), "%sLagrer i %s", fromModland ? "Modland er bare til lesing. " : "",
+		dest + strlen("/home/web_user/"));
+	bt2_toast(msg);
+	return true;
+}
+
+void webDiskOpConfineDir(void)
+{
+	char cwd[PATH_MAX];
+	if (getcwd(cwd, sizeof (cwd)) != NULL && (pathInside(cwd, WEB_USER_ROOT) || pathInside(cwd, WEB_MODLAND_ROOT)))
+		return;
+
+	// "../" from the top folder (or "Set path" somewhere else): back to the user's own folders
+	if (chdir(WEB_USER_ROOT) != 0)
+		makeDirs(WEB_USER_ROOT);
 }
 
 EM_ASYNC_JS(int32_t, bt2_prepareFile, (const char *path), {
@@ -714,7 +861,20 @@ void webFrame(void)
 	if (audioMode == 0)
 		updateAudioClockAnchor();
 
-	webScopesTick();
+	// the scopes move at FT2's 64 Hz, whatever the screen's frame rate is
+	static double lastScopeTime, scopeSteps;
+	const double now = emscripten_get_now();
+	if (lastScopeTime == 0.0)
+		lastScopeTime = now - (1000.0 / SCOPE_HZ);
+
+	scopeSteps += (now - lastScopeTime) * (SCOPE_HZ / 1000.0);
+	lastScopeTime = now;
+	if (scopeSteps > 4.0)
+		scopeSteps = 4.0; // after a pause (app in the background): don't race to catch up
+
+	const int32_t steps = (int32_t)scopeSteps;
+	scopeSteps -= steps;
+	webScopesTick(steps);
 
 	// tell the page where the FT2 screen is (for the Import/Export buttons in Disk Op.)
 	bt2_frame(video.renderX, video.renderY, video.renderW, video.renderH, webDiskOpIsShown() ? 1 : 0, SCREEN_H);
@@ -733,7 +893,8 @@ void webFrame(void)
 			memcpy(&lastSavedConfig, &config, sizeof (config_t));
 		}
 
-		webSyncFiles();
+		if (!editor.wavIsRendering) // (not while a WAV file is being written: it would be copied again and again)
+			bt2_syncIfChanged(); // (files are also stored right after they are written, see bt2_pre.js)
 	}
 }
 

@@ -3140,7 +3140,11 @@ void playSample(uint8_t chNum, uint8_t insNum, uint8_t smpNum, uint8_t note, uin
 
 	unlockAudio();
 
+#ifdef __EMSCRIPTEN__
+	webWaitVoiceTrigger(&ch->status); // BerntTracker (web): the mixer may run on this same thread
+#else
 	while (ch->status & CS_TRIGGER_VOICE); // wait for voice to trigger in mixer
+#endif
 
 	// for sampling playback line in Smp. Ed.
 	editor.curPlayInstr = editor.curInstr;
@@ -3203,7 +3207,11 @@ void playRange(uint8_t chNum, uint8_t insNum, uint8_t smpNum, uint8_t note, uint
 
 	unlockAudio();
 
+#ifdef __EMSCRIPTEN__
+	webWaitVoiceTrigger(&ch->status); // BerntTracker (web): the mixer may run on this same thread
+#else
 	while (ch->status & CS_TRIGGER_VOICE); // wait for voice to trigger in mixer
+#endif
 
 	// for sampling playback line in Smp. Ed.
 	editor.curPlayInstr = editor.curInstr;

@@ -688,6 +688,11 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 
 static void wavRender(bool checkOverwrite)
 {
+#ifdef __EMSCRIPTEN__
+	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
+		return;
+#endif
+
 	WDStartPos = (uint8_t)(MAX(0, MIN(WDStartPos, song.songLength - 1)));
 	WDStopPos  = (uint8_t)(MAX(0, MIN(MAX(WDStartPos, WDStopPos), song.songLength - 1)));
 

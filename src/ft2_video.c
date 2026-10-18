@@ -345,7 +345,7 @@ static int32_t calcWantedScreenH(void)
 
 	const double dTotalH = ((double)video.windowH * TK_W) / video.windowW; // in "native" pixels
 	int32_t h = (int32_t)dTotalH - tkGetAreaHeight();
-	if (h < SCREEN_H_BASE) h = SCREEN_H_BASE;
+	if (h < SCREEN_H_BASE + 2) h = SCREEN_H_BASE; // (never just 1 extra line: too small for a frame)
 	if (h > SCREEN_H_MAX) h = SCREEN_H_MAX;
 	return h;
 }
@@ -378,7 +378,7 @@ static void applyScreenHeight(int32_t newH)
 
 void videoFillExtraScreenArea(void) // empty panel below non-pattern screens (when the screen is taller)
 {
-	if (SCREEN_EXTRA_H > 0 && !ui.patternEditorShown && !ui.extendedPatternEditor)
+	if (SCREEN_EXTRA_H >= 2 && !ui.patternEditorShown && !ui.extendedPatternEditor) // (drawFramework needs h >= 2)
 		drawFramework(0, SCREEN_H_BASE, SCREEN_W, SCREEN_EXTRA_H, FRAMEWORK_TYPE1);
 }
 

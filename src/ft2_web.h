@@ -22,6 +22,7 @@ void webWaitThread(SDL_Thread *thread, int *status);
 #define SDL_WaitThread(thread, status) webWaitThread((thread), (status))
 
 // audio: low-latency audio via an AudioWorklet (FT2's mixer runs on the browser's audio thread)
+void webWaitVoiceTrigger(volatile uint8_t *status); // replaces FT2's busy-wait for the mixer to start a voice
 SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have);
 void webAudioClose(void);
 void webAudioPause(bool pause);
@@ -45,13 +46,17 @@ SDL_Keycode webFixKeycode(SDL_Scancode scancode, SDL_Keycode keycode);
 void webToggleFullscreen(void); // Alt+Enter: the browser's fullscreen
 
 // files
+#define WEB_USER_ROOT "/home/web_user/BT2" // the user's own folders (stored in the browser)
 void webSyncFiles(void);
 bool webPrepareFile(const char *path); // download a library/Modland song before it is opened (false = failed)
+bool webDiskOpPrepareSaveDir(void); // before saving: never into the Modland library (kept in memory only)
+bool webDiskOpReadOnlyHere(void);   // true in the Modland library (no new folders, renaming or deleting there)
+void webDiskOpConfineDir(void);     // Disk Op. stays inside the user's folders and the Modland library
 
 // Modland (online library)
 #define WEB_MODLAND_ROOT "/Modland"
 #define WEB_MODLAND_SEARCH_DIR "/Modland/~Search results"
 bool webModlandPrepare(void);              // loads the list (first time: from modland.com) and makes /Modland
-int32_t webModlandSearch(const char *query); // number of hits (in WEB_MODLAND_SEARCH_DIR), -1 = failed // save the in-app file system to the browser's storage (IndexedDB)
+int32_t webModlandSearch(const char *query); // number of hits (in WEB_MODLAND_SEARCH_DIR), -1 = failed
 
 #endif

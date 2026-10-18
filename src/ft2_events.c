@@ -119,6 +119,9 @@ void handleEvents(void)
 	if (editor.diskOpReadDir)
 	{
 		editor.diskOpReadDir = false;
+#ifdef __EMSCRIPTEN__
+		webDiskOpConfineDir(); // BerntTracker (web): stay inside the user's folders and the Modland library
+#endif
 		diskOp_StartDirReadThread();
 	}
 
