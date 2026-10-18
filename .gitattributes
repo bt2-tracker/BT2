@@ -1,0 +1,3 @@
+# BerntTracker: skript som kjøres på Linux (GitHub) må ha LF-linjeskift
+*.sh text eol=lf
+*.yml text eol=lf

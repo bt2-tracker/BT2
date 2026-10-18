@@ -507,6 +507,9 @@ static void handleSDLEvents(void)
 		}
 		else if (event.type == SDL_MOUSEBUTTONUP)
 		{
+			if (event.button.which == SDL_TOUCH_MOUSEID)
+				readMouseXY(); // BerntTracker: touch "clicks" jump to a new position, update it first
+
 			mouseButtonUpHandler(event.button.button);
 #if defined __APPLE__ && defined __aarch64__
 			armMacGhostMouseCursorFix();
@@ -514,8 +517,18 @@ static void handleSDLEvents(void)
 		}
 		else if (event.type == SDL_MOUSEBUTTONDOWN)
 		{
+			if (event.button.which == SDL_TOUCH_MOUSEID)
+				readMouseXY(); // BerntTracker: touch "clicks" jump to a new position, update it first
+
 			mouseButtonDownHandler(event.button.button);
 		}
+#ifdef __EMSCRIPTEN__
+		else if (event.type == SDL_WINDOWEVENT && (event.window.event == SDL_WINDOWEVENT_RESIZED ||
+		         event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED))
+		{
+			videoHandleResize();
+		}
+#endif
 #if defined __APPLE__ && defined __aarch64__
 		else if (event.type == SDL_MOUSEMOTION)
 		{

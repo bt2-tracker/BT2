@@ -26,6 +26,7 @@
 #include "ft2_replayer.h"
 #include "ft2_textboxes.h"
 #include "ft2_config.h"
+#include "ft2_unicode.h"
 
 // ------------------------------------------------------------------------------------------------
 // layout
@@ -39,7 +40,8 @@ enum // what a key does
 	K_FN,         // sticky Fn layer (number row = F1..F12, arrows = PgUp/Home/PgDn/End)
 	K_KPPLUS,     // sticky numpad '+' (instrument bank +4)
 	K_OCT_DN,
-	K_OCT_UP
+	K_OCT_UP,
+	K_HIDE        // hides the keyboard (a thin bar with a "Keyboard" button stays)
 };
 
 typedef struct tkKey_t
@@ -69,7 +71,8 @@ static const tkKey_t keys[] =
 	{ 0,1,K_NORMAL,10.0f,1.0f, SDL_SCANCODE_0, SDL_SCANCODE_F10, "0", '0', '=' },
 	{ 0,1,K_NORMAL,11.0f,1.0f, SDL_SCANCODE_MINUS, SDL_SCANCODE_F11, "+", '+', '?' },
 	{ 0,1,K_NORMAL,12.0f,1.0f, SDL_SCANCODE_EQUALS, SDL_SCANCODE_F12, "\\", '\\', '`' },
-	{ 0,1,K_NORMAL,13.0f,2.0f, SDL_SCANCODE_BACKSPACE, 0, "\x05", 0, 0 },
+	{ 0,1,K_NORMAL,13.0f,1.0f, SDL_SCANCODE_BACKSPACE, 0, "\x05", 0, 0 },
+	{ 0,1,K_HIDE,  14.0f,1.0f, 0, 0, "\x07", 0, 0 },
 
 	// row 1: Tab + QWERTY + Ins
 	{ 1,1,K_NORMAL,0.0f, 1.5f, SDL_SCANCODE_TAB, 0, "Tab", 0, 0 },
@@ -192,7 +195,7 @@ typedef struct pointer_t
 	SDL_Scancode sentScancode; // what we sent on key down (for the matching key up)
 } pointer_t;
 
-static bool enabled = true, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
+static bool shown = true, shiftOn, ctrlOn, altOn, fnOn, kpPlusOn, mouseOverKb;
 static uint8_t heldCount[NUM_KEYS];
 static pointer_t pointers[MAX_POINTERS];
 static uint32_t *kbBuffer;
@@ -202,17 +205,27 @@ static SDL_Rect kbWinRect, kbPixRect;
 
 bool tkIsEnabled(void)
 {
-	return enabled;
+	return true; // the keyboard area (full keyboard or the thin bar) is always part of the layout
+}
+
+bool tkIsShown(void)
+{
+	return shown;
+}
+
+int32_t tkGetAreaHeight(void)
+{
+	return shown ? TK_H : TK_MINI_H;
 }
 
 bool tkMouseIsOverKeyboard(void)
 {
-	return enabled && mouseOverKb;
+	return mouseOverKb;
 }
 
 void tkToggle(void)
 {
-	enabled ^= 1;
+	shown ^= 1;
 	lastStateHash = 0;
 
 	if (video.fullscreen)
@@ -312,6 +325,8 @@ static const char *glyphUp[7]    = { "...##...", "..####..", ".######.", "######
 static const char *glyphDown[7]  = { "..####..", "..####..", "..####..", "########", ".######.", "..####..", "...##..." };
 static const char *glyphBksp[7]  = { "....#######", "...##.....#", "..###.#.#.#", ".####..#..#", "..###.#.#.#", "...##.....#", "....#######" };
 static const char *glyphUmlaut[2] = { "##.##", "##.##" };
+static const char *glyphHide[7]  = { "..........", "#########.", ".#######..", "..#####...", "...###....", "....#.....", ".........." };
+static const char *glyphUpSmall[4] = { "...#...", "..###..", ".#####.", "#######" };
 
 static void tk_bigText(int32_t x, int32_t y, const char *s, uint32_t col) // font1 (the main FT2 font)
 {
@@ -326,6 +341,7 @@ static void tk_bigText(int32_t x, int32_t y, const char *s, uint32_t col) // fon
 			case 4: tk_drawGlyphRows(x, y+1, glyphDown,  7, col); x += 10; continue;
 			case 5: tk_drawGlyphRows(x, y+1, glyphBksp,  7, col); x += 13; continue;
 			case 6: tk_drawGlyphRows(x, y+6, glyphUmlaut,2, col); x += 7;  continue;
+			case 7: tk_drawGlyphRows(x, y+1, glyphHide,  7, col); x += 11; continue;
 			default: break;
 		}
 
@@ -455,7 +471,7 @@ enum { L_NORMAL, L_FN, L_CTRL, L_HEX, L_EFX, L_VOL, L_TEXT };
 
 static int32_t tk_getLayer(void)
 {
-	if (editor.editTextFlag) return L_TEXT;
+	if (editor.editTextFlag || ui.sysReqShown) return L_TEXT;
 	if (fnOn) return L_FN;
 	if (ctrlOn) return L_CTRL;
 
@@ -546,6 +562,7 @@ static void tk_getKeyLook(int32_t i, int32_t layer, char *label, char *sub, int3
 
 		case K_OCT_DN: *cat = C_OCTAVE; strcpy(sub, "Lower"); return;
 		case K_OCT_UP: *cat = C_OCTAVE; strcpy(sub, "Higher"); return;
+		case K_HIDE:   *cat = C_MOD;    strcpy(sub, "Hide"); return;
 
 		case K_KPPLUS:
 			*cat = kpPlusOn ? C_ACTIVE : C_INSTR;
@@ -696,8 +713,34 @@ static void tk_getKeyLook(int32_t i, int32_t layer, char *label, char *sub, int3
 	}
 }
 
+static void tk_drawMiniBar(void) // shown when the keyboard is hidden
+{
+	tk_fillRect(0, 0, TK_W, TK_MINI_H, COL_DESK);
+	tk_fillRect(0, 0, TK_W, 1, COL_FW_LIGHT);
+	tk_fillRect(0, 0, 1, TK_MINI_H, COL_FW_LIGHT);
+	tk_fillRect(0, TK_MINI_H-1, TK_W, 1, COL_FW_DARK);
+	tk_fillRect(TK_W-1, 0, 1, TK_MINI_H, COL_FW_DARK);
+
+	char str[32];
+	sprintf(str, "OCT %d", editor.curOctave);
+	tk_tinyText(8, 8, str, 0x7D92AA);
+	tk_tinyText(TK_W - 214, 8, "CTRL+K OR TAP HERE", 0x7D92AA);
+
+	// "Keyboard" button
+	const int32_t bw = 110, bx = TK_W - bw - 3, by = 2, bh = TK_MINI_H - 4;
+	tk_drawButton(bx, by, bw, bh, catFill[C_MOD], false);
+	tk_drawGlyphRows(bx + 8, by + 4, glyphUpSmall, 4, 0x000000);
+	tk_bigText(bx + 22, by + 3, "Keyboard", 0x000000);
+}
+
 static void tk_drawKeyboard(void)
 {
+	if (!shown)
+	{
+		tk_drawMiniBar();
+		return;
+	}
+
 	const int32_t layer = tk_getLayer();
 
 	// panel (FT2 "framework")
@@ -741,6 +784,7 @@ static uint64_t tk_getStateHash(void)
 	uint64_t h = 1469598103934665603ULL;
 	#define HASH(v) h = (h ^ (uint64_t)(v)) * 1099511628211ULL
 
+	HASH(shown);
 	HASH(tk_getLayer());
 	HASH(shiftOn); HASH(ctrlOn); HASH(altOn); HASH(fnOn); HASH(kpPlusOn);
 	HASH(editor.curOctave);
@@ -753,7 +797,7 @@ static uint64_t tk_getStateHash(void)
 
 void tkRender(SDL_Renderer *renderer)
 {
-	if (!enabled || kbTexture == NULL || kbBuffer == NULL)
+	if (kbTexture == NULL || kbBuffer == NULL)
 		return;
 
 	const uint64_t hash = tk_getStateHash();
@@ -764,7 +808,8 @@ void tkRender(SDL_Renderer *renderer)
 		SDL_UpdateTexture(kbTexture, NULL, kbBuffer, TK_W * sizeof (uint32_t));
 	}
 
-	SDL_RenderCopy(renderer, kbTexture, NULL, &kbPixRect);
+	SDL_Rect src = { 0, 0, TK_W, tkGetAreaHeight() };
+	SDL_RenderCopy(renderer, kbTexture, &src, &kbPixRect);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -772,7 +817,7 @@ void tkRender(SDL_Renderer *renderer)
 
 void tkApplyModifiers(void)
 {
-	if (!enabled)
+	if (!shown)
 		return;
 
 	if (shiftOn) keyb.leftShiftPressed = true;
@@ -790,7 +835,7 @@ static int32_t tk_keyAt(int32_t winX, int32_t winY)
 
 	const int32_t x = (int32_t)(((int64_t)(winX - kbWinRect.x) * TK_W) / kbWinRect.w);
 	const int32_t y = (int32_t)(((int64_t)(winY - kbWinRect.y) * TK_H) / kbWinRect.h);
-	if (x < 0 || x >= TK_W || y < 0 || y >= TK_H)
+	if (x < 0 || x >= TK_W || y < 0 || y >= TK_H || !shown)
 		return -1;
 
 	// find the nearest key (so the 2px gaps between keys also count)
@@ -818,18 +863,60 @@ static int32_t tk_keyAt(int32_t winX, int32_t winY)
 
 static bool tk_pointInKeyboard(int32_t winX, int32_t winY)
 {
-	return enabled && winX >= kbWinRect.x && winX < kbWinRect.x+kbWinRect.w &&
+	return winX >= kbWinRect.x && winX < kbWinRect.x+kbWinRect.w &&
 	       winY >= kbWinRect.y && winY < kbWinRect.y+kbWinRect.h;
+}
+
+// While a dialog box (system request) is open, it reads SDL events itself, so we post real events
+static void tk_pushKeyEvent(SDL_Scancode sc, bool down)
+{
+	SDL_Event e;
+	memset(&e, 0, sizeof (e));
+	e.type = down ? SDL_KEYDOWN : SDL_KEYUP;
+	e.key.state = down ? SDL_PRESSED : SDL_RELEASED;
+	e.key.windowID = SDL_GetWindowID(video.window);
+	e.key.keysym.scancode = sc;
+	e.key.keysym.sym = SDL_GetKeyFromScancode(sc);
+	e.key.keysym.mod = (Uint16)((shiftOn ? KMOD_LSHIFT : 0) | (ctrlOn ? KMOD_LCTRL : 0) | (altOn ? KMOD_LALT : 0));
+	SDL_PushEvent(&e);
+}
+
+static void tk_pushTextEvent(char cp850Char)
+{
+	char tmp[2] = { cp850Char, '\0' };
+	char *utf8 = cp850ToUtf8(tmp);
+	if (utf8 == NULL)
+		return;
+
+	SDL_Event e;
+	memset(&e, 0, sizeof (e));
+	e.type = SDL_TEXTINPUT;
+	e.text.windowID = SDL_GetWindowID(video.window);
+	strncpy(e.text.text, utf8, sizeof (e.text.text) - 1);
+	free(utf8);
+	SDL_PushEvent(&e);
 }
 
 static void tk_sendKeyDown(SDL_Scancode sc)
 {
+	if (ui.sysReqShown)
+	{
+		tk_pushKeyEvent(sc, true);
+		return;
+	}
+
 	readKeyModifiers(); // includes our sticky modifiers (tkApplyModifiers)
 	keyDownHandler(sc, SDL_GetKeyFromScancode(sc), false);
 }
 
 static void tk_sendKeyUp(SDL_Scancode sc)
 {
+	if (ui.sysReqShown)
+	{
+		tk_pushKeyEvent(sc, false);
+		return;
+	}
+
 	readKeyModifiers();
 	keyUpHandler(sc, SDL_GetKeyFromScancode(sc));
 }
@@ -903,6 +990,12 @@ static void tk_pressKey(int32_t pointerSlot, int32_t keyIndex)
 				editor.curOctave++;
 			return;
 
+		case K_HIDE:
+			heldCount[keyIndex] = 0;
+			p->key = -1;
+			tkToggle();
+			return;
+
 		default: break;
 	}
 
@@ -910,7 +1003,10 @@ static void tk_pressKey(int32_t pointerSlot, int32_t keyIndex)
 	if (editor.editTextFlag && k->ch != 0)
 	{
 		const char c = shiftOn ? k->chShift : k->ch;
-		handleTextEditInputChar(c);
+		if (ui.sysReqShown)
+			tk_pushTextEvent(c); // dialog box with a text field (e.g. "Make dir.")
+		else
+			handleTextEditInputChar(c);
 		return;
 	}
 
@@ -919,7 +1015,7 @@ static void tk_pressKey(int32_t pointerSlot, int32_t keyIndex)
 		sc = k->fnScancode;
 
 	// while typing text, the right Shift key works as Enter (the keyboard has no other Enter key)
-	if (editor.editTextFlag && sc == SDL_SCANCODE_RSHIFT)
+	if ((editor.editTextFlag || ui.sysReqShown) && sc == SDL_SCANCODE_RSHIFT)
 		sc = SDL_SCANCODE_RETURN;
 
 	// Ctrl+K on the on-screen keyboard hides it
@@ -974,9 +1070,20 @@ static int32_t tk_findPointer(int64_t id)
 
 static void tk_pointerDown(int64_t id, int32_t winX, int32_t winY)
 {
-	const int32_t key = tk_keyAt(winX, winY);
-	if (key < 0 || tk_findPointer(id) >= 0)
+	if (!shown)
+	{
+		tkToggle(); // tapping the thin bar brings the keyboard back
 		return;
+	}
+
+	const int32_t key = tk_keyAt(winX, winY);
+	if (key < 0)
+		return;
+
+	// a "down" for a pointer we think is still down: its "up" was lost (e.g. eaten by a dialog box)
+	const int32_t old = tk_findPointer(id);
+	if (old >= 0)
+		tk_releaseKey(old);
 
 	for (int32_t i = 0; i < MAX_POINTERS; i++)
 	{
@@ -1002,9 +1109,6 @@ static bool tk_pointerUp(int64_t id)
 
 bool tkHandleEvent(const SDL_Event *event)
 {
-	if (!enabled)
-		return false;
-
 	switch (event->type)
 	{
 		case SDL_MOUSEMOTION:

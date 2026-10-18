@@ -9,8 +9,11 @@
 
 #define TK_W 787 // keyboard width in "native" pixels (the FT2 screen is stretched to this width)
 #define TK_H 147 // keyboard height in native pixels (the FT2 screen is 400)
+#define TK_MINI_H 22 // height of the thin bar shown when the keyboard is hidden
 
 bool tkIsEnabled(void);
+bool tkIsShown(void);
+int32_t tkGetAreaHeight(void); // TK_H when shown, TK_MINI_H when hidden
 void tkToggle(void); // shows/hides the keyboard and resizes the window
 
 bool tkInit(SDL_Renderer *renderer);

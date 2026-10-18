@@ -17,7 +17,9 @@
 #else
 #include <sys/types.h>
 #include <sys/stat.h>
+#ifndef __EMSCRIPTEN__
 #include <fts.h> // for fts_open() and stuff in recursiveDelete()
+#endif
 #include <unistd.h>
 #include <dirent.h>
 #include <errno.h>
@@ -502,6 +504,42 @@ bool fileExistsAnsi(char *str)
 	return (retVal != -1);
 }
 
+#ifdef __EMSCRIPTEN__
+static bool deleteDirRecursive(UNICHAR *strU) // BerntTracker (web): no fts.h, plain recursive delete
+{
+	DIR *dir = opendir(strU);
+	if (dir == NULL)
+		return (remove(strU) == 0);
+
+	bool ret = true;
+	struct dirent *ent;
+	while ((ent = readdir(dir)) != NULL)
+	{
+		if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
+			continue;
+
+		char path[PATH_MAX + 1];
+		snprintf(path, sizeof (path), "%s/%s", strU, ent->d_name);
+
+		struct stat st;
+		if (stat(path, &st) == 0 && S_ISDIR(st.st_mode))
+		{
+			if (!deleteDirRecursive(path))
+				ret = false;
+		}
+		else if (remove(path) != 0)
+		{
+			ret = false;
+		}
+	}
+	closedir(dir);
+
+	if (rmdir(strU) != 0)
+		ret = false;
+
+	return ret;
+}
+#else
 static bool deleteDirRecursive(UNICHAR *strU)
 {
 	FTSENT *curr;
@@ -547,6 +585,7 @@ static bool deleteDirRecursive(UNICHAR *strU)
 
 	return ret;
 }
+#endif
 
 static bool makeDirAnsi(char *str)
 {
@@ -2211,6 +2250,10 @@ static void drawDiskOpScreen(void)
 	showPushButton(PB_DISKOP_EXIT);
 	showPushButton(PB_DISKOP_PARENT);
 	showPushButton(PB_DISKOP_ROOT);
+#ifdef __EMSCRIPTEN__
+	showPushButton(PB_DISKOP_IMPORT);
+	showPushButton(PB_DISKOP_EXPORT);
+#endif
 	showPushButton(PB_DISKOP_SET_PATH);
 	showPushButton(PB_DISKOP_LIST_UP);
 	showPushButton(PB_DISKOP_LIST_DOWN);
@@ -2312,6 +2355,10 @@ void hideDiskOpScreen(void)
 	hidePushButton(PB_DISKOP_EXIT);
 	hidePushButton(PB_DISKOP_PARENT);
 	hidePushButton(PB_DISKOP_ROOT);
+#ifdef __EMSCRIPTEN__
+	hidePushButton(PB_DISKOP_IMPORT);
+	hidePushButton(PB_DISKOP_EXPORT);
+#endif
 	hidePushButton(PB_DISKOP_SET_PATH);
 	hidePushButton(PB_DISKOP_LIST_UP);
 	hidePushButton(PB_DISKOP_LIST_DOWN);
@@ -2375,6 +2422,8 @@ void pbDiskOpRoot(void)
 {
 #ifdef _WIN32
 	openDirectory(L"\\");
+#elif defined __EMSCRIPTEN__
+	openDirectory("/home/web_user/BT2"); // BerntTracker: the user's own folders, not the system root
 #else
 	openDirectory("/");
 #endif
@@ -2544,3 +2593,43 @@ void rbDiskOpSmpSaveWav(void)
 	checkRadioButton(RB_DISKOP_SMP_SAVEAS_WAV);
 	diskOpChangeFilenameExt(".wav");
 }
+
+#ifdef __EMSCRIPTEN__
+// ------------------------------------------------------------------------------------------------
+// BerntTracker: web version helpers
+
+void pbDiskOpImport(void) { } // the page opens the file picker itself (it must happen during the tap)
+void pbDiskOpExport(void) { } // same for sharing/downloading the file
+
+bool webDiskOpIsShown(void)
+{
+	return ui.diskOpShown;
+}
+
+static void storePath(char *configPath, const UNICHAR *pathU)
+{
+	if (pathU != NULL && pathU[0] != '\0' && strlen(pathU) < 80)
+		strcpy(configPath, pathU);
+}
+
+void webDiskOpStorePathsInConfig(void) // remember the last used folder for each file type
+{
+	storePath(config.modulesPath,  FReq_ModCurPathU);
+	storePath(config.instrPath,    FReq_InsCurPathU);
+	storePath(config.samplesPath,  FReq_SmpCurPathU);
+	storePath(config.patternsPath, FReq_PatCurPathU);
+	storePath(config.tracksPath,   FReq_TrkCurPathU);
+}
+
+const char *webDiskOpGetFilePath(void) // current folder + the filename in the "File:" box
+{
+	static char path[PATH_MAX + 1];
+
+	path[0] = '\0';
+	if (FReq_CurPathU == NULL || FReq_FileName == NULL || FReq_FileName[0] == '\0')
+		return path;
+
+	snprintf(path, sizeof (path), "%s/%s", FReq_CurPathU, FReq_FileName);
+	return path;
+}
+#endif

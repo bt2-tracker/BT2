@@ -209,11 +209,20 @@ void flipFrame(void)
 
 	tkRender(video.renderer); // BerntTracker: on-screen keyboard below the FT2 screen
 
+#ifdef __EMSCRIPTEN__
+	webFrame();
+#endif
+
 	SDL_RenderPresent(video.renderer);
 
 	eraseSprites();
 
+#ifdef __EMSCRIPTEN__
+	webWaitForNextFrame(); // BerntTracker: give control back to the browser until the next screen refresh
+	if (0)
+#else
 	if (!video.vsync60HzPresent)
+#endif
 	{
 		// we have no VSync, do crude thread sleeping to sync to ~60Hz
 		hpc_Wait(&video.vblankHpc);
@@ -274,6 +283,11 @@ void showErrorMsgBox(const char *fmt, ...)
 */
 static void getWindowModeSize(int32_t *w, int32_t *h)
 {
+#ifdef __EMSCRIPTEN__
+	webGetWindowSize(w, h); // the page is always filled
+	return;
+#endif
+
 	if (!tkIsEnabled())
 	{
 		*w = SCREEN_W * video.windowModeUpscaleFactor;
@@ -282,7 +296,7 @@ static void getWindowModeSize(int32_t *w, int32_t *h)
 	}
 
 	const double dTotalW = TK_W;
-	const double dTotalH = SCREEN_H + TK_H;
+	const double dTotalH = SCREEN_H + tkGetAreaHeight();
 	double dScale = video.windowModeUpscaleFactor;
 
 	// make sure it fits on the screen (leave room for the window title and the taskbar)
@@ -313,10 +327,15 @@ static void updateTouchKeyboardLayout(void)
 {
 	int32_t cx = 0, cy = 0, cw = video.windowW, ch = video.windowH;
 
-	if (video.fullscreen && !(config.specialFlags2 & STRETCH_IMAGE))
+#ifdef __EMSCRIPTEN__
+	const bool fitInside = true; // browser: keep the shape, center it in the page
+#else
+	const bool fitInside = video.fullscreen && !(config.specialFlags2 & STRETCH_IMAGE);
+#endif
+	if (fitInside)
 	{
 		// keep the shape, center it
-		const double dAspect = (double)TK_W / (SCREEN_H + TK_H);
+		const double dAspect = (double)TK_W / (SCREEN_H + tkGetAreaHeight());
 		if ((double)video.windowW / video.windowH > dAspect)
 		{
 			cw = (int32_t)(video.windowH * dAspect);
@@ -329,7 +348,7 @@ static void updateTouchKeyboardLayout(void)
 		}
 	}
 
-	const int32_t screenH = (int32_t)(((int64_t)ch * SCREEN_H) / (SCREEN_H + TK_H));
+	const int32_t screenH = (int32_t)(((int64_t)ch * SCREEN_H) / (SCREEN_H + tkGetAreaHeight()));
 
 	video.renderX = cx;
 	video.renderY = cy;
@@ -423,12 +442,27 @@ static void updateRenderSizeVars(void)
 		video.dDpiZoomFactorY = (double)heightInPixels / video.windowH;
 	}
 
+#ifdef __EMSCRIPTEN__
+	if (video.renderer != NULL)
+	{
+		SDL_GetRendererOutputSize(video.renderer, &widthInPixels, &heightInPixels);
+		if (video.windowW > 0) video.dDpiZoomFactorX = (double)widthInPixels / video.windowW;
+		if (video.windowH > 0) video.dDpiZoomFactorY = (double)heightInPixels / video.windowH;
+	}
+#endif
+
 	if (tkIsEnabled())
 		updateTouchKeyboardLayout();
 
 	// "hardware mouse" calculations
 	video.mouseCursorUpscaleFactor = MIN(video.renderW / SCREEN_W, video.renderH / SCREEN_H);
 	createMouseCursors();
+}
+
+void videoHandleResize(void) // BerntTracker: the browser window/iPad was resized or rotated
+{
+	updateRenderSizeVars();
+	updateMouseScaling();
 }
 
 void enterFullscreen(void)
@@ -1009,6 +1043,9 @@ bool setupWindow(void)
 	uint32_t windowFlags = SDL_WINDOW_ALLOW_HIGHDPI;
 #if defined (__APPLE__) || defined (_WIN32) // yet another quirk!
 	windowFlags |= SDL_WINDOW_HIDDEN;
+#endif
+#ifdef __EMSCRIPTEN__
+	windowFlags |= SDL_WINDOW_RESIZABLE; // follows the browser window
 #endif
 
 	setWindowSizeFromConfig(false);

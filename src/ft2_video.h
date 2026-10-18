@@ -73,3 +73,4 @@ void leaveFullscreen(void);
 void setWindowSizeFromConfig(bool updateRenderer);
 bool recreateTexture(void);
 void toggleFullscreen(void);
+void videoHandleResize(void); // BerntTracker

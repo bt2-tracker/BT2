@@ -39,6 +39,10 @@ void diskOpSetFilename(uint8_t type, UNICHAR *pathU);
 void sanitizeFilename(const char *src);
 bool diskOpGoParent(void);
 void pbDiskOpRoot(void);
+#ifdef __EMSCRIPTEN__
+void pbDiskOpImport(void);
+void pbDiskOpExport(void);
+#endif
 int32_t getExtOffset(char *s, int32_t stringLen); // get byte offset of file extension (last '.')
 bool testDiskOpMouseDown(bool mouseHeldDown);
 void testDiskOpMouseRelease(void);

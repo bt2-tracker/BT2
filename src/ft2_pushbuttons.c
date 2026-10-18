@@ -398,7 +398,13 @@ pushButton_t pushButtons[NUM_PUSHBUTTONS] =
 	{ 134, 127, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive8 },
 #else
 	{ 134,   2, 31, 13, 0, 0, "../",               NULL,    NULL,             pbDiskOpParent },
+#ifdef __EMSCRIPTEN__
+	{ 134,  16, 31, 12, 0, 0, "BT2",               NULL,    NULL,             pbDiskOpRoot },
+	{ 134,  33, 31, 22, 0, 0, "Imp.",              NULL,    NULL,             pbDiskOpImport }, // BerntTracker (web)
+	{ 134,  57, 31, 22, 0, 0, "Exp.",              NULL,    NULL,             pbDiskOpExport },
+#else
 	{ 134,  16, 31, 12, 0, 0, "/",                 NULL,    NULL,             pbDiskOpRoot },
+#endif
 #endif
 	{ 335,   2, 18, 13, 1, 3, ARROW_UP_STRING,     NULL,    pbDiskOpListUp,   NULL },
 	{ 335, 158, 18, 13, 1, 3, ARROW_DOWN_STRING,   NULL,    pbDiskOpListDown, NULL },

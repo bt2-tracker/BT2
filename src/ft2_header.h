@@ -90,3 +90,5 @@ typedef struct smpPtr_t
 {
 	int8_t *origPtr, *ptr;
 } smpPtr_t;
+
+#include "ft2_web.h" // BerntTracker: web version (only active with Emscripten)

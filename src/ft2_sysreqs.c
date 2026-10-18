@@ -10,6 +10,7 @@
 #include "ft2_video.h"
 #include "ft2_sysreqs.h"
 #include "ft2_structs.h"
+#include "ft2_touchkeys.h" // BerntTracker
 #include "ft2_events.h"
 #include "ft2_smpfx.h"
 
@@ -307,6 +308,9 @@ int16_t okBox(int16_t type, const char *headline, const char *text, void (*check
 		{
 			handleWaitVblQuirk(&inputEvent);
 
+			if (tkHandleEvent(&inputEvent)) // BerntTracker: on-screen keyboard also works in dialog boxes
+				continue;
+
 			if (inputEvent.type == SDL_KEYDOWN)
 			{
 				if (inputEvent.key.keysym.sym == SDLK_ESCAPE)
@@ -535,6 +539,9 @@ int16_t inputBox(int16_t type, const char *headline, char *edText, uint16_t maxS
 		{
 			handleWaitVblQuirk(&inputEvent);
 
+			if (tkHandleEvent(&inputEvent)) // BerntTracker: on-screen keyboard also works in dialog boxes
+				continue;
+
 			if (inputEvent.type == SDL_TEXTINPUT)
 			{
 				if (editor.editTextFlag)
@@ -682,6 +689,10 @@ int16_t okBoxThreadSafe(int16_t type, const char *headline, const char *text, vo
 {
 	if (!editor.mainLoopOngoing)
 		return 0; // main loop was not even started yet, bail out.
+
+#ifdef __EMSCRIPTEN__
+	return okBox(type, headline, text, checkBoxCallback); // BerntTracker: "threads" run on the main thread on the web
+#endif
 
 	// the amount of time to wait is not important, but close to one video frame makes sense
 	const uint32_t waitTime = (uint32_t)((1000.0 / VBLANK_HZ) + 0.5);

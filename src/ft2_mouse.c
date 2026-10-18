@@ -857,7 +857,13 @@ void readMouseXY(void)
 		return;
 	}
 
-	if (video.fullscreen)
+#ifdef __EMSCRIPTEN__
+	const bool useWindowCoords = true; // BerntTracker: browser - the page is the "screen"
+#else
+	const bool useWindowCoords = video.fullscreen;
+#endif
+
+	if (useWindowCoords)
 	{
 		mouse.buttonState = SDL_GetMouseState(&mx, &my);
 
@@ -881,7 +887,7 @@ void readMouseXY(void)
 	mouse.rawX = mx;
 	mouse.rawY = my;
 
-	if (video.fullscreen)
+	if (useWindowCoords)
 	{
 		// if software mouse is enabled, warp mouse inside render space
 		if (!(config.specialFlags2 & HARDWARE_MOUSE))

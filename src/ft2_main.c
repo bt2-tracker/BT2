@@ -163,6 +163,10 @@ int main(int argc, char *argv[])
 
 	loadConfigOrSetDefaults(); // config must be loaded at this exact point
 
+#ifdef __EMSCRIPTEN__
+	webInit(); // BerntTracker: web folders and settings
+#endif
+
 	if (!setupWindow() || !setupRenderer())
 	{
 		// error message was shown in the functions above
@@ -244,6 +248,10 @@ int main(int argc, char *argv[])
 
 	editor.mainLoopOngoing = true;
 	hpc_ResetCounters(&video.vblankHpc); // this must be the last thing we do before entering the main loop
+
+#ifdef __EMSCRIPTEN__
+	webAfterSetup();
+#endif
 
 	while (editor.programRunning)
 	{

@@ -542,8 +542,23 @@ static int32_t scopeThreadFunc(void *ptr)
 	return true;
 }
 
+#ifdef __EMSCRIPTEN__
+void webScopesTick(void) // BerntTracker: no scope thread on the web, updated once per frame instead
+{
+	editor.scopeThreadBusy = true;
+	updateScopes();
+	editor.scopeThreadBusy = false;
+}
+#endif
+
 bool initScopes(void)
 {
+#ifdef __EMSCRIPTEN__
+	(void)scopeThreadFunc;
+	(void)scopeThread;
+	return true;
+#endif
+
 	scopeThread = SDL_CreateThread(scopeThreadFunc, "scope thread", NULL);
 	if (scopeThread == NULL)
 	{

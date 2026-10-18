@@ -257,7 +257,11 @@ char *cp850ToUtf8(char *src)
 	if (srcLen <= 0)
 		return NULL;
 
+#if defined(__EMSCRIPTEN__) || defined(__MUSL__)
+	iconv_t cd = iconv_open("UTF-8", "cp850"); // BerntTracker (web): musl only knows the "cp850" name
+#else
 	iconv_t cd = iconv_open("UTF-8", "850");
+#endif
 	if (cd == (iconv_t)-1)
 		return NULL;
 
@@ -303,7 +307,7 @@ char *utf8ToCp850(char *src, bool removeIllegalChars)
 	iconv_t cd = iconv_open("850//TRANSLIT//IGNORE", "UTF-8-MAC");
 #elif defined(__NetBSD__) || defined(__sun) || defined(sun)
 	iconv_t cd = iconv_open("850", "UTF-8");
-#elif defined(__MUSL__)
+#elif defined(__MUSL__) || defined(__EMSCRIPTEN__)
 	iconv_t cd = iconv_open("cp850", "UTF-8");
 #else
 	iconv_t cd = iconv_open("850//TRANSLIT//IGNORE", "UTF-8");

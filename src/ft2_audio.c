@@ -715,16 +715,26 @@ uint64_t getChQueueTimestamp(void)
 
 void lockAudio(void)
 {
+#ifdef __EMSCRIPTEN__
+	if (audio.dev != 0)
+		webAudioLock();
+#else
 	if (audio.dev != 0)
 		SDL_LockAudioDevice(audio.dev);
+#endif
 
 	audio.locked = true;
 }
 
 void unlockAudio(void)
 {
+#ifdef __EMSCRIPTEN__
+	if (audio.dev != 0)
+		webAudioUnlock();
+#else
 	if (audio.dev != 0)
 		SDL_UnlockAudioDevice(audio.dev);
+#endif
 
 	audio.locked = false;
 }
@@ -770,8 +780,13 @@ void pauseAudio(void) // lock audio + clear voices/scopes + render silence (for 
 		return;
 	}
 
+#ifdef __EMSCRIPTEN__
+	if (audio.dev > 0)
+		webAudioPause(true);
+#else
 	if (audio.dev > 0)
 		SDL_PauseAudioDevice(audio.dev, true);
+#endif
 
 	audio.resetSyncTickTimeFlag = true;
 
@@ -788,8 +803,13 @@ void resumeAudio(void) // unlock audio
 	if (!audioPaused)
 		return;
 
+#ifdef __EMSCRIPTEN__
+	if (audio.dev > 0)
+		webAudioPause(false);
+#else
 	if (audio.dev > 0)
 		SDL_PauseAudioDevice(audio.dev, false);
+#endif
 
 	audioPaused = false;
 }
@@ -803,7 +823,11 @@ static void fillVisualsSyncBuffer(void)
 	{
 		audio.resetSyncTickTimeFlag = false;
 
+#ifdef __EMSCRIPTEN__
+		audio.tickTime64 = webAudioPerfCounter() + audio.audLatencyPerfValInt; // may run on the browser's audio thread
+#else
 		audio.tickTime64 = SDL_GetPerformanceCounter() + audio.audLatencyPerfValInt;
+#endif
 		audio.tickTime64Frac = audio.audLatencyPerfValFrac;
 	}
 
@@ -1009,10 +1033,18 @@ bool setupAudio(bool showErrorMsg)
 	if (device != NULL && strcmp(device, DEFAULT_AUDIO_DEV_STR) == 0)
 		device = NULL; // force default device
 
+#ifdef __EMSCRIPTEN__
+	(void)device;
+	want.format = AUDIO_F32;
+	audio.dev = webAudioOpen(audioCallback, &want, &have); // BerntTracker: low-latency browser audio
+	if (audio.dev == 0)
+	{
+#else
 	audio.dev = SDL_OpenAudioDevice(device, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
 	if (audio.dev == 0)
 	{
 		audio.dev = SDL_OpenAudioDevice(NULL, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
+#endif
 		if (audio.currOutputDevice != NULL)
 		{
 			free(audio.currOutputDevice);
@@ -1131,8 +1163,12 @@ void closeAudio(void)
 {
 	if (audio.dev > 0)
 	{
+#ifdef __EMSCRIPTEN__
+		webAudioClose();
+#else
 		SDL_PauseAudioDevice(audio.dev, true);
 		SDL_CloseAudioDevice(audio.dev);
+#endif
 		audio.dev = 0;
 	}
 

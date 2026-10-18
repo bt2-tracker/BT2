@@ -1,0 +1,69 @@
+# Bygger nettversjonen av BerntTracker II og legger den ut på GitHub Pages
+# hver gang noe sendes til GitHub (Commit + Sync).
+name: Nettversjon
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+env:
+  EMSDK_VERSION: 3.1.52
+  SDL_TAG: release-2.30.12
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ env.EMSDK_VERSION }}
+          actions-cache-folder: emsdk-cache
+
+      - name: Hent bygget SDL2 fra cache
+        id: sdlcache
+        uses: actions/cache@v4
+        with:
+          path: sdl-web
+          key: sdl-web-${{ env.SDL_TAG }}-${{ env.EMSDK_VERSION }}-ww1
+
+      - name: Bygg SDL2 for nett
+        if: steps.sdlcache.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL_TAG" https://github.com/libsdl-org/SDL.git sdl-src
+          emcmake cmake -S sdl-src -B sdl-build -DCMAKE_BUILD_TYPE=Release \
+            -DSDL_SHARED=OFF -DSDL_STATIC=ON -DSDL_TEST=OFF -DSDL_THREADS=OFF -DSDL_PTHREADS=OFF \
+            -DCMAKE_C_FLAGS="-matomics -mbulk-memory" -DCMAKE_INSTALL_PREFIX="$PWD/sdl-web"
+          cmake --build sdl-build -j4
+          cmake --install sdl-build
+
+      - name: Bygg BerntTracker II
+        run: |
+          bash web/build_web.sh "$PWD/sdl-web" "$PWD/sdl-web" "$PWD/site"
+          touch site/.nojekyll
+          ls -la site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

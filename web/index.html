@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="no">
+<head>
+<meta charset="utf-8">
+<title>BerntTracker II</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="BT2">
+<meta name="theme-color" content="#2D3135">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" href="icon-192.png">
+<!-- makes the page "cross-origin isolated" so the low-latency audio engine can run (GitHub Pages can't set these headers) -->
+<script src="coi-serviceworker.js"></script>
+<style>
+:root { --bg: #2D3135; --text: #DFDFE3; --dim: #8F96A0; --accent: #7AA8EC; }
+html, body {
+	margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+	background: #000; color: var(--text);
+	font-family: -apple-system, system-ui, "Segoe UI", Roboto, sans-serif;
+	-webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+	touch-action: none; overscroll-behavior: none; -webkit-tap-highlight-color: transparent;
+}
+canvas#canvas {
+	position: fixed; left: 0; top: 0; width: 100vw; height: 100vh; height: 100dvh;
+	display: block; outline: none; touch-action: none; background: #000;
+	image-rendering: pixelated; image-rendering: crisp-edges;
+}
+.overlay {
+	position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+	gap: 14px; background: var(--bg); z-index: 10; text-align: center; padding: 16px; box-sizing: border-box;
+}
+.overlay.hidden { display: none; }
+.logo { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
+.logo span { color: var(--accent); }
+.status { color: var(--dim); font-size: 15px; max-width: 520px; line-height: 1.4; }
+.bar { width: 260px; height: 6px; background: #12161A; border-radius: 3px; overflow: hidden; }
+.bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+button.big {
+	font: inherit; font-size: 20px; font-weight: 600; padding: 16px 36px; border-radius: 10px; cursor: pointer;
+	color: #000; background: #6CC46F; border: 2px solid #357A38; min-height: 56px;
+}
+.mode { font-size: 13px; color: var(--dim); }
+.mode b { color: var(--text); }
+#rotate { z-index: 20; background: rgba(20,24,28,.94); }
+#toast {
+	position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 30;
+	background: #12161A; color: var(--text); border: 1px solid #596169; border-radius: 8px;
+	padding: 10px 16px; font-size: 15px; opacity: 0; transition: opacity .25s; pointer-events: none;
+}
+#toast.show { opacity: 1; }
+#credits { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 11px; color: #5D646C; }
+#credits a { color: #7D92AA; }
+</style>
+</head>
+<body>
+<canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+<div id="loading" class="overlay">
+	<div class="logo">Berntracker <span>II</span></div>
+	<div class="bar"><div id="progress"></div></div>
+	<div class="status" id="loadStatus">Laster…</div>
+</div>
+
+<div id="start" class="overlay hidden">
+	<div class="logo">Berntracker <span>II</span></div>
+	<button class="big" id="startButton">Trykk for å starte</button>
+	<div class="mode" id="audioMode"></div>
+	<div id="credits">
+		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
+		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
+	</div>
+</div>
+
+<div id="rotate" class="overlay hidden">
+	<div class="logo">↻</div>
+	<div class="status">Snu enheten til liggende for best plass.<br>Rotate your device to landscape.</div>
+	<div class="mode">Trykk for å fortsette likevel</div>
+</div>
+
+<div id="toast"></div>
+<input type="file" id="importInput" multiple style="display:none">
+
+<script>
+'use strict';
+(function () {
+	const $ = (id) => document.getElementById(id);
+	const SCREEN_W = 632, SCREEN_H = 400;
+
+	const BT2 = globalThis.BT2 = {
+		lastFrame: 0,
+		ctx: null,
+		audioMode: '',
+		started: false,
+		rect: { x: 0, y: 0, w: 1, h: 1 },
+		diskOpShown: false,
+		syncing: false,
+		syncAgain: false,
+
+		// ---------- main loop timing (~60 frames per second, follows the screen refresh)
+		waitFrame() {
+			return new Promise((resolve) => {
+				const tick = (t) => {
+					if (t - BT2.lastFrame >= 15.0 || document.hidden) { BT2.lastFrame = t; resolve(); }
+					else requestAnimationFrame(tick);
+				};
+				if (document.hidden) setTimeout(() => resolve(), 50);
+				else requestAnimationFrame(tick);
+			});
+		},
+
+		// ---------- audio
+		audioStarted(ctx, mode, node) {
+			BT2.ctx = ctx;
+			BT2.node = node;
+			BT2.audioMode = mode;
+			try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+			const resume = () => { if (BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {}); };
+			['pointerdown', 'pointerup', 'touchend', 'keydown', 'mousedown'].forEach((ev) =>
+				document.addEventListener(ev, resume, { capture: true, passive: true }));
+			BT2.showAudioMode();
+		},
+
+		latencyMs() {
+			const c = BT2.ctx;
+			if (!c) return 0;
+			let s = (c.baseLatency || 0) + (c.outputLatency || 0);
+			if (BT2.audioMode === 'worklet') s += 128 / c.sampleRate;
+			else s += (BT2.compatTarget + 128) / c.sampleRate;
+			return Math.round(s * 1000);
+		},
+
+		showAudioMode() {
+			const c = BT2.ctx;
+			if (!c) return;
+			const name = BT2.audioMode === 'worklet' ? 'lav forsinkelse' : 'kompatibel modus';
+			$('audioMode').innerHTML = 'Lyd: <b>' + name + '</b> · ' + c.sampleRate + ' Hz · ca. ' + BT2.latencyMs() + ' ms';
+		},
+
+		// compat mode: the mixer runs on the main thread and fills a small queue
+		compatTarget: 1024,
+		compatSent: 0,
+		compatConsumed: 0,
+		compatReportTime: 0,
+		async openCompatAudio() {
+			try {
+				const AC = window.AudioContext || window.webkitAudioContext;
+				const ctx = new AC({ latencyHint: 'interactive' });
+				const code = `
+class BT2Queue extends AudioWorkletProcessor {
+	constructor() {
+		super(); this.q = []; this.pos = 0; this.consumed = 0; this.n = 0; this.under = false;
+		this.port.onmessage = (e) => this.q.push(e.data);
+	}
+	process(inputs, outputs) {
+		const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
+		for (let i = 0; i < L.length; i++) {
+			if (this.q.length === 0) { L[i] = 0; R[i] = 0; this.under = true; continue; }
+			const c = this.q[0]; L[i] = c[this.pos]; R[i] = c[this.pos + 1]; this.pos += 2; this.consumed++;
+			if (this.pos >= c.length) { this.q.shift(); this.pos = 0; }
+		}
+		if (++this.n >= 4) { this.n = 0; this.port.postMessage({ consumed: this.consumed, under: this.under }); this.under = false; }
+		return true;
+	}
+}
+registerProcessor('bt2-queue', BT2Queue);`;
+				const url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
+				await ctx.audioWorklet.addModule(url);
+				const node = new AudioWorkletNode(ctx, 'bt2-queue', { numberOfInputs: 0, outputChannelCount: [2] });
+				node.port.onmessage = (e) => {
+					BT2.compatConsumed = e.data.consumed;
+					BT2.compatReportTime = performance.now();
+					if (e.data.under && BT2.started && BT2.compatTarget < 4096) BT2.compatTarget += 256;
+				};
+				node.connect(ctx.destination);
+				BT2.compatNode = node;
+				BT2.audioStarted(ctx, 'compat', node);
+				setInterval(BT2.pump, 4);
+				return ctx.sampleRate;
+			} catch (e) {
+				console.error('Audio failed', e);
+				return 0;
+			}
+		},
+		compatLatencyFrames() { return BT2.compatTarget + 128; },
+		pump() {
+			if (!BT2.compatNode || !BT2.ctx || BT2.ctx.state !== 'running') return;
+			const sr = BT2.ctx.sampleRate;
+			const since = (performance.now() - BT2.compatReportTime) * sr / 1000;
+			let queued = BT2.compatSent - BT2.compatConsumed - since;
+			let guard = 0;
+			while (queued < BT2.compatTarget && guard++ < 32) {
+				const frames = 256;
+				const ptr = Module._webAudioRenderChunk(frames);
+				const data = Module.HEAPF32.slice(ptr >> 2, (ptr >> 2) + frames * 2);
+				BT2.compatNode.port.postMessage(data, [data.buffer]);
+				BT2.compatSent += frames;
+				queued += frames;
+			}
+		},
+
+		// ---------- files (stored in the browser, kept between sessions)
+		syncFiles() {
+			if (!Module.bt2FS) return;
+			if (BT2.syncing) { BT2.syncAgain = true; return; }
+			BT2.syncing = true;
+			Module.bt2FS.syncfs(false, (err) => {
+				if (err) console.warn('syncfs', err);
+				BT2.syncing = false;
+				if (BT2.syncAgain) { BT2.syncAgain = false; BT2.syncFiles(); }
+			});
+		},
+
+		toast(msg) {
+			const t = $('toast');
+			t.textContent = msg;
+			t.classList.add('show');
+			clearTimeout(BT2.toastTimer);
+			BT2.toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
+		},
+
+		doImport() {
+			const input = $('importInput');
+			input.value = '';
+			input.onchange = async () => {
+				const files = Array.from(input.files || []);
+				if (files.length === 0) return;
+				const FS = Module.bt2FS;
+				const dir = FS.cwd();
+				let n = 0;
+				for (const f of files) {
+					try {
+						const name = f.name.replace(/[\/\\]/g, '_');
+						FS.writeFile(dir + '/' + name, new Uint8Array(await f.arrayBuffer()));
+						n++;
+					} catch (e) { console.error(e); }
+				}
+				Module._webImportDone();
+				BT2.syncFiles();
+				BT2.toast(n === 1 ? 'Importerte 1 fil' : 'Importerte ' + n + ' filer');
+			};
+			input.click();
+		},
+
+		doExport() {
+			const path = Module.UTF8ToString(Module._webGetExportPath());
+			const FS = Module.bt2FS;
+			const name = path.split('/').pop();
+			let data = null;
+			try { if (path && FS.analyzePath(path).exists) data = FS.readFile(path); } catch (e) {}
+			if (!data) { BT2.toast('Lagre filen først (Save), så Exp.'); return; }
+			const file = new File([data], name, { type: 'application/octet-stream' });
+			if (navigator.canShare && navigator.canShare({ files: [file] })) {
+				navigator.share({ files: [file], title: name }).catch(() => {});
+			} else {
+				const a = document.createElement('a');
+				a.href = URL.createObjectURL(file);
+				a.download = name;
+				document.body.appendChild(a);
+				a.click();
+				setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+			}
+		},
+
+		// called every frame from the program: where the FT2 screen is (for the Imp./Exp. buttons)
+		frame(x, y, w, h, diskOpShown) {
+			BT2.rect.x = x; BT2.rect.y = y; BT2.rect.w = w; BT2.rect.h = h;
+			BT2.diskOpShown = !!diskOpShown;
+		},
+
+		hitButton(clientX, clientY, bx, by, bw, bh) {
+			const r = BT2.rect;
+			const fx = (clientX - r.x) * SCREEN_W / r.w;
+			const fy = (clientY - r.y) * SCREEN_H / r.h;
+			return fx >= bx && fx < bx + bw && fy >= by && fy < by + bh;
+		},
+
+		appStarted() {
+			$('loading').classList.add('hidden');
+			$('start').classList.remove('hidden');
+			BT2.showAudioMode();
+		},
+	};
+
+	// Imp./Exp. in Disk Op.: must run directly inside the tap (iPad/Safari rule for file pickers and sharing)
+	document.addEventListener('pointerup', (e) => {
+		if (!BT2.started || !BT2.diskOpShown) return;
+		if (BT2.hitButton(e.clientX, e.clientY, 134, 33, 31, 22)) BT2.doImport();
+		else if (BT2.hitButton(e.clientX, e.clientY, 134, 57, 31, 22)) BT2.doExport();
+	}, { capture: true });
+
+	// no pinch-zoom, no scrolling, no long-press menus
+	['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault()));
+	document.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+	$('startButton').addEventListener('click', () => {
+		if (BT2.ctx) BT2.ctx.resume().catch(() => {});
+		BT2.started = true;
+		$('start').classList.add('hidden');
+		$('canvas').focus();
+		setTimeout(BT2.showAudioMode, 500);
+	});
+
+	// portrait hint (phones and tablets held upright)
+	const checkRotate = () => {
+		const portrait = window.innerHeight > window.innerWidth && window.innerWidth < 900;
+		$('rotate').classList.toggle('hidden', !portrait || BT2.rotateDismissed);
+	};
+	$('rotate').addEventListener('click', () => { BT2.rotateDismissed = true; checkRotate(); });
+	window.addEventListener('resize', checkRotate);
+	checkRotate();
+
+	// save files when the app goes to the background
+	document.addEventListener('visibilitychange', () => { if (document.hidden) BT2.syncFiles(); });
+	window.addEventListener('pagehide', () => BT2.syncFiles());
+
+	// ask the browser to keep our files (not clear them when space is low)
+	try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}
+
+	// ---------- start the program
+	globalThis.Module = {
+		canvas: $('canvas'),
+		print: (t) => console.log(t),
+		printErr: (t) => console.warn(t),
+		setStatus: (t) => {
+			const m = /\((\d+(?:\.\d+)?)\/(\d+)\)/.exec(t || '');
+			if (m) $('progress').style.width = (100 * m[1] / m[2]) + '%';
+		},
+		monitorRunDependencies: () => {},
+		onAbort: (what) => { $('loadStatus').textContent = 'Feil: ' + what; $('loading').classList.remove('hidden'); },
+	};
+
+	const load = (src, label) => {
+		$('loadStatus').textContent = 'Laster ' + label + '…';
+		const s = document.createElement('script');
+		s.src = src;
+		s.onerror = () => { $('loadStatus').textContent = 'Kunne ikke laste ' + src; };
+		document.body.appendChild(s);
+	};
+
+	const canUseWorklet = () => window.crossOriginIsolated === true && typeof SharedArrayBuffer !== 'undefined' &&
+		typeof AudioWorkletNode !== 'undefined';
+	const forceCompat = /[?&]compat\b/.test(location.search);
+
+	if (!forceCompat && canUseWorklet()) {
+		load('bt2.js', 'lavforsinkelse-motor');
+	} else {
+		// the helper script may reload the page once to turn on isolation - give it a moment
+		const waiting = !forceCompat && window.isSecureContext && navigator.serviceWorker && !navigator.serviceWorker.controller;
+		setTimeout(() => load('bt2-compat.js', 'kompatibel motor'), waiting ? 2500 : 0);
+	}
+})();
+</script>
+</body>
+</html>
