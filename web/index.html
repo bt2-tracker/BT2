@@ -77,7 +77,7 @@ button.small {
 	<div class="logo">Bernttracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.6 · 18.10.2026</div>
+	<div class="mode">Versjon 0.7 · 18.10.2026</div>
 	<button class="small" id="diagButton">Lydtest</button>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
@@ -443,6 +443,22 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		frame(x, y, w, h, diskOpShown) {
 			BT2.rect.x = x; BT2.rect.y = y; BT2.rect.w = w; BT2.rect.h = h;
 			BT2.diskOpShown = !!diskOpShown;
+			BT2.checkCanvasShape();
+		},
+
+		// After a rotation, iPhone/iPad sometimes report the old size first, and the picture gets
+		// stretched. If the drawing surface doesn't have the same shape as the page, ask again.
+		lastResizeAsk: 0,
+		checkCanvasShape() {
+			const c = $('canvas');
+			const cw = c.clientWidth, ch = c.clientHeight;
+			if (!cw || !ch || !c.width || !c.height) return;
+			const off = Math.abs((c.width / c.height) / (cw / ch) - 1);
+			const now = performance.now();
+			if (off > 0.01 && now - BT2.lastResizeAsk > 250) {
+				BT2.lastResizeAsk = now;
+				window.dispatchEvent(new Event('resize'));
+			}
 		},
 
 		hitButton(clientX, clientY, bx, by, bw, bh) {
@@ -564,6 +580,14 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	};
 	$('rotate').addEventListener('click', () => { BT2.rotateDismissed = true; checkRotate(); });
 	window.addEventListener('resize', checkRotate);
+	// rotation: the new size can arrive late, so check again a few times
+	const askResizeLater = (e) => {
+		if (e && e.isTrusted === false) return;
+		[100, 300, 700, 1200].forEach((ms) => setTimeout(() => window.dispatchEvent(new Event('resize')), ms));
+	};
+	window.addEventListener('orientationchange', askResizeLater);
+	window.addEventListener('resize', askResizeLater);
+	if (window.visualViewport) window.visualViewport.addEventListener('resize', askResizeLater);
 	checkRotate();
 
 	// save files when the app goes to the background
