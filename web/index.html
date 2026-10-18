@@ -51,6 +51,13 @@ button.big {
 	padding: 10px 16px; font-size: 15px; opacity: 0; transition: opacity .25s; pointer-events: none;
 }
 #toast.show { opacity: 1; }
+button.small {
+	font: inherit; font-size: 15px; padding: 10px 18px; border-radius: 8px; cursor: pointer; min-height: 44px;
+	color: var(--text); background: #3B4045; border: 1px solid #596169;
+}
+#diag { z-index: 15; justify-content: flex-start; padding-top: 40px; overflow-y: auto; }
+#diag pre { font: 14px/1.5 ui-monospace, Menlo, monospace; text-align: left; background: #12161A; padding: 12px 16px; border-radius: 8px; min-width: 300px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 #credits { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 11px; color: #5D646C; }
 #credits a { color: #7D92AA; }
 </style>
@@ -68,11 +75,26 @@ button.big {
 	<div class="logo">Berntracker <span>II</span></div>
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
-	<div class="mode">Versjon 0.2 · 18.10.2026</div>
+	<div class="mode">Versjon 0.3 · 18.10.2026</div>
+	<button class="small" id="diagButton">Lydtest</button>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
 		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
 	</div>
+</div>
+
+<div id="diag" class="overlay hidden">
+	<div class="logo" style="font-size:24px">Lydtest</div>
+	<pre id="diagText">…</pre>
+	<div class="row">
+		<button class="big" id="pipButton" style="font-size:18px;padding:14px 28px">Pip (direkte i Safari)</button>
+	</div>
+	<div class="status">Trykk «Pip». Kommer lyden med en gang? Da er forsinkelsen i programmet.<br>Er pipet også sent, er det iPaden/nettleseren som bufrer lyden.</div>
+	<div class="row">
+		<button class="small" id="engineFast">Bruk lavforsinkelse-motor</button>
+		<button class="small" id="engineCompat">Bruk kompatibel motor</button>
+	</div>
+	<button class="small" id="diagClose">Lukk</button>
 </div>
 
 <div id="rotate" class="overlay hidden">
@@ -322,6 +344,47 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		$('canvas').focus();
 		setTimeout(BT2.showAudioMode, 500);
 	});
+
+	// ---------- sound test / diagnostics
+	const diagUpdate = () => {
+		if ($('diag').classList.contains('hidden')) return;
+		const c = BT2.ctx;
+		const L = [];
+		L.push('Motor:          ' + (BT2.audioMode === 'worklet' ? 'lavforsinkelse (AudioWorklet)' : BT2.audioMode === 'compat' ? 'kompatibel' : '-'));
+		L.push('Isolert side:   ' + (window.crossOriginIsolated ? 'ja' : 'nei'));
+		if (c) {
+			L.push('Status:         ' + c.state);
+			L.push('Samplerate:     ' + c.sampleRate + ' Hz');
+			L.push('baseLatency:    ' + (c.baseLatency !== undefined ? (c.baseLatency * 1000).toFixed(1) + ' ms' : 'ukjent'));
+			L.push('outputLatency:  ' + (c.outputLatency !== undefined ? (c.outputLatency * 1000).toFixed(1) + ' ms' : 'ukjent'));
+			if (c.getOutputTimestamp) {
+				const ts = c.getOutputTimestamp();
+				if (ts && ts.contextTime !== undefined && ts.performanceTime) {
+					const behind = (c.currentTime - ts.contextTime) * 1000;
+					L.push('Utgang bak:     ' + behind.toFixed(1) + ' ms (målt)');
+				}
+			}
+			if (BT2.audioMode === 'compat') L.push('Buffer:         ' + BT2.compatTarget + ' samples');
+		}
+		L.push('Enhet:          ' + navigator.userAgent.replace(/^Mozilla\/5\.0 /, '').slice(0, 60));
+		$('diagText').textContent = L.join('\n');
+	};
+	setInterval(diagUpdate, 250);
+	$('diagButton').addEventListener('click', () => { if (BT2.ctx) BT2.ctx.resume().catch(() => {}); $('diag').classList.remove('hidden'); diagUpdate(); });
+	$('diagClose').addEventListener('click', () => $('diag').classList.add('hidden'));
+	$('pipButton').addEventListener('click', () => {
+		const c = BT2.ctx;
+		if (!c) return;
+		c.resume().catch(() => {});
+		const o = c.createOscillator(), g = c.createGain();
+		o.frequency.value = 880;
+		g.gain.setValueAtTime(0.3, c.currentTime);
+		g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.15);
+		o.connect(g); g.connect(c.destination);
+		o.start(); o.stop(c.currentTime + 0.16);
+	});
+	$('engineFast').addEventListener('click', () => { location.href = location.pathname; });
+	$('engineCompat').addEventListener('click', () => { location.href = location.pathname + '?compat'; });
 
 	// portrait hint (phones and tablets held upright)
 	const checkRotate = () => {
