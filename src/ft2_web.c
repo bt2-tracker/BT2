@@ -410,12 +410,29 @@ void webAudioUnlock(void)
 		__atomic_store_n(&audioLockState, 0, __ATOMIC_RELEASE);
 }
 
+// The page makes the AudioContext (BT2.createAudioContext: on Windows it asks for a smaller sound buffer
+// than on other devices). 0 if that fails.
+EM_JS(int32_t, bt2_createAudioContext, (void), {
+	try {
+		const ctx = globalThis.BT2.createAudioContext();
+		return ctx ? emscriptenRegisterAudioObject(ctx) : 0;
+	} catch (e) {
+		console.warn('AudioContext', e);
+		return 0;
+	}
+});
+
 static int32_t openEngine(void) // first open: create the AudioContext and attach the wanted engine
 {
-	EmscriptenWebAudioCreateAttributes attr;
-	attr.latencyHint = "interactive";
-	attr.sampleRate = 0; // use the device's own rate (no resampling = less latency)
-	audioCtx = emscripten_create_audio_context(&attr);
+	audioCtx = bt2_createAudioContext();
+	if (audioCtx == 0)
+	{
+		EmscriptenWebAudioCreateAttributes attr;
+		attr.latencyHint = "interactive";
+		attr.sampleRate = 0; // use the device's own rate (no resampling = less latency)
+		audioCtx = emscripten_create_audio_context(&attr);
+	}
+
 	if (audioCtx == 0)
 		return 0;
 

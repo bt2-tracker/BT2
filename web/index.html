@@ -152,6 +152,13 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		onerror="this.outerHTML='&lt;div class=&quot;logo&quot;&gt;Bernttracker &lt;span&gt;II&lt;/span&gt;&lt;/div&gt;'">
 	<button class="big" id="startButton">Trykk for å starte</button>
 	<div class="mode" id="audioMode"></div>
+	<div class="row hidden" id="bufferRow" style="align-items:center">
+		<span class="mode">Lydbuffer:</span>
+		<button class="small" data-buffer="smallest">Minst</button>
+		<button class="small" data-buffer="normal">Normal</button>
+		<button class="small" data-buffer="large">Stor</button>
+	</div>
+	<div class="mode hidden" id="bufferNote">Minst gir lavest forsinkelse. Knitrer lyden, velg Normal eller Stor (siden starter på nytt).</div>
 	<div class="mode" id="versionLine"></div>
 	<div class="appbox" id="appBox">
 		<div id="appStatus">Sjekker om appen er lagret på denne enheten …</div>
@@ -191,9 +198,9 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	<div class="logo" style="font-size:24px">Lydtest</div>
 	<pre id="diagText">…</pre>
 	<div class="row">
-		<button class="big" id="pipButton" style="font-size:18px;padding:14px 28px">Pip (direkte i Safari)</button>
+		<button class="big" id="pipButton" style="font-size:18px;padding:14px 28px">Pip (rett fra nettleseren)</button>
 	</div>
-	<div class="status">Trykk «Pip». Kommer lyden med en gang? Da er forsinkelsen i programmet.<br>Er pipet også sent, er det iPaden/nettleseren som bufrer lyden.</div>
+	<div class="status">Trykk «Pip». Kommer lyden med en gang? Da er forsinkelsen i programmet.<br>Er pipet også sent, er det maskinen/nettleseren som bufrer lyden.</div>
 	<div class="row">
 		<button class="small engine" id="engine-compat">Kompatibel</button>
 		<button class="small engine" id="engine-sp">SP</button>
@@ -254,7 +261,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.18';
+	const BT2_VERSION = '0.19';
 	const BT2_DATE = '19.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -313,6 +320,75 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			if (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) return true;
 			return /Safari/.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Firefox|FxiOS|Android/.test(ua);
 		},
+		// which device and browser this is (for the few things that must differ between them)
+		platformInfo: null,
+		platform() {
+			if (BT2.platformInfo) return BT2.platformInfo;
+			const ua = navigator.userAgent;
+			const uad = navigator.userAgentData;
+			const plat = (uad && uad.platform) || '';
+			let os = 'other';
+			if (/iPhone|iPod/.test(ua)) os = 'iphone';
+			else if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) os = 'ipad';
+			else if (/Android/.test(ua)) os = 'android';
+			else if (/Windows/.test(plat) || /Windows NT/.test(ua)) os = 'windows';
+			else if (/macOS/.test(plat) || /Macintosh/.test(ua)) os = 'mac';
+			else if (/Linux|Chrome OS/.test(plat) || /Linux|CrOS/.test(ua)) os = 'linux';
+			// Chromium = Chrome, Edge, Opera, Brave ...: they share Chrome's sound system (on iPad/iPhone every browser is Safari inside)
+			const chromium = os !== 'ipad' && os !== 'iphone' &&
+				((uad && Array.isArray(uad.brands) && uad.brands.some((b) => /Chromium/.test(b.brand))) || /Chrome\/|Chromium\//.test(ua));
+			const browser = /Edg(e|A|iOS)?\//.test(ua) ? 'Edge' : /Firefox\/|FxiOS/.test(ua) ? 'Firefox' : /OPR\//.test(ua) ? 'Opera' :
+				/Chrome\/|CriOS/.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'ukjent nettleser';
+			BT2.platformInfo = { os, browser, chromium };
+			return BT2.platformInfo;
+		},
+		platformName() {
+			const p = BT2.platform();
+			const os = { iphone: 'iPhone', ipad: 'iPad', android: 'Android', windows: 'Windows', mac: 'Mac', linux: 'Linux' }[p.os] || 'ukjent enhet';
+			return os + ' · ' + p.browser;
+		},
+
+		// Chrome/Edge on Windows: the sound buffer is picked on the start screen (remembered as bt2-win-buffer):
+		//   smallest (standard) = the smallest buffer the sound card allows. Windows 10/11 then plays the sound in
+		//                         its low-latency mode (often blocks of ~3 ms instead of 10 ms) when the sound driver
+		//                         supports it, and nothing changes when it doesn't
+		//   normal              = the browser's usual buffer (10 ms on Windows, as before v0.19)
+		//   large               = ~40 ms, for computers where the sound crackles
+		// All other devices (iPad, iPhone, Mac ...) keep the browser's usual "interactive" buffer, as before.
+		WIN_BUFFERS: { smallest: 0, normal: 'interactive', large: 0.04 },
+		WIN_BUFFER_NAMES: { smallest: 'minst', normal: 'normal', large: 'stor' },
+		winLowLatencyPossible() {
+			const p = BT2.platform();
+			return p.os === 'windows' && p.chromium;
+		},
+		winBufferChoice() {
+			if (!BT2.winLowLatencyPossible()) return '';
+			try {
+				const v = localStorage.getItem('bt2-win-buffer');
+				if (v === 'normal' || v === 'large') return v;
+			} catch (e) {}
+			return 'smallest';
+		},
+		latencyHintUsed: '',
+		createAudioContext() { // (also called by the program, for the low-latency engine's AudioContext)
+			const AC = window.AudioContext || window.webkitAudioContext;
+			if (!AC) return null;
+			const choice = BT2.winBufferChoice();
+			let ctx = null;
+			if (choice && choice !== 'normal') {
+				try {
+					ctx = new AC({ latencyHint: BT2.WIN_BUFFERS[choice] });
+					BT2.latencyHintUsed = choice;
+				} catch (e) { console.warn('AudioContext (' + choice + ')', e); }
+			}
+			if (!ctx) {
+				ctx = new AC({ latencyHint: 'interactive' });
+				BT2.latencyHintUsed = choice ? 'normal' : 'interactive';
+			}
+			// the delay shown on the start screen and in the sound test is known once the sound runs
+			try { ctx.addEventListener('statechange', () => setTimeout(() => { BT2.showAudioMode(); diagUpdate(); }, 300)); } catch (e) {}
+			return ctx;
+		},
 		savedEngine() {
 			try { const e = localStorage.getItem('bt2-engine-v3'); if (BT2.ENGINES.includes(e)) return e; } catch (e) {}
 			return '';
@@ -340,8 +416,8 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		async openEngine(ctx, code) { // called once by the program when the sound starts
 			try {
 				if (!ctx) {
-					const AC = window.AudioContext || window.webkitAudioContext;
-					ctx = new AC({ latencyHint: 'interactive' });
+					ctx = BT2.createAudioContext();
+					if (!ctx) throw new Error('no AudioContext in this browser');
 				}
 				BT2.ctx = ctx;
 				try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
@@ -465,11 +541,12 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			BT2.toast('Lydmotoren «lav forsinkelse» stoppet – bytter til kompatibel');
 		},
 
-		engineLatencyFrames() {
+		engineLatencyFrames(mode) { // (mode: another engine than the one playing now, for the start screen)
 			const c = BT2.ctx;
 			const out = c ? Math.round(((c.baseLatency || 0) + (c.outputLatency || 0)) * c.sampleRate) : 256;
-			if (BT2.audioMode === 'worklet') return 128 + out;
-			if (BT2.audioMode === 'sp') return 2 * BT2.spSize + out;
+			const m = mode || BT2.audioMode;
+			if (m === 'worklet') return 128 + out;
+			if (m === 'sp') return 2 * BT2.spSize + out;
 			return BT2.compatTarget + 128 + out;
 		},
 
@@ -478,22 +555,28 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			try { if (typeof Module._webSetLatencyFrames === 'function') Module._webSetLatencyFrames(BT2.engineLatencyFrames()); } catch (e) {}
 		},
 
-		latencyMs() {
+		latencyMs(mode) {
 			const c = BT2.ctx;
 			if (!c) return 0;
-			return Math.round(BT2.engineLatencyFrames() * 1000 / c.sampleRate);
+			return Math.round(BT2.engineLatencyFrames(mode) * 1000 / c.sampleRate);
 		},
 
 		showAudioMode() {
 			const c = BT2.ctx;
 			if (!c) return;
+			// (before the start tap: the engine that will play after it, with its delay)
 			const mode = BT2.deferredEngine || BT2.audioMode;
 			const name = mode === 'worklet' ? 'lav forsinkelse' : mode === 'sp' ? 'SP-modus' : 'kompatibel modus';
-			$('audioMode').innerHTML = 'Lyd: <b>' + name + '</b> · ' + c.sampleRate + ' Hz · ca. ' + BT2.latencyMs() + ' ms';
+			$('audioMode').innerHTML = 'Lyd: <b>' + name + '</b> · ' + c.sampleRate + ' Hz · ca. ' + BT2.latencyMs(mode) + ' ms';
 			['worklet', 'compat', 'sp'].forEach((e) => {
 				const b = $('engine-' + e);
 				if (b) b.classList.toggle('on', mode === e);
 			});
+			// sound buffer choice (Windows, Chrome/Edge)
+			const choice = BT2.winBufferChoice();
+			$('bufferRow').classList.toggle('hidden', !choice);
+			$('bufferNote').classList.toggle('hidden', !choice);
+			document.querySelectorAll('#bufferRow [data-buffer]').forEach((b) => b.classList.toggle('on', b.dataset.buffer === choice));
 		},
 
 		// compat engine: the program fills a small queue every few milliseconds, and right before and
@@ -2177,10 +2260,18 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		const c = BT2.ctx;
 		const L = [];
 		L.push('Motor:          ' + (BT2.ENGINE_NAMES[BT2.audioMode] || '-'));
+		L.push('Plattform:      ' + BT2.platformName());
 		L.push('Isolert side:   ' + (window.crossOriginIsolated ? 'ja' : 'nei'));
 		if (c) {
 			L.push('Status:         ' + c.state);
 			L.push('Samplerate:     ' + c.sampleRate + ' Hz');
+			if (BT2.winLowLatencyPossible()) {
+				// (the sound card's block: ~10 ms = Windows' normal mode, a few ms = its low-latency mode)
+				const small = c.baseLatency !== undefined && c.baseLatency > 0 && c.baseLatency < 0.009;
+				const used = BT2.latencyHintUsed;
+				L.push('Lydbuffer:      ' + (BT2.WIN_BUFFER_NAMES[used] || used) + (used !== 'smallest' || c.state !== 'running' ? ''
+					: small ? ' (Windows lav forsinkelse er i bruk)' : ' (lydkortet gir ikke mindre enn normal)') + ' – velges på startskjermen');
+			}
 			L.push('baseLatency:    ' + (c.baseLatency !== undefined ? (c.baseLatency * 1000).toFixed(1) + ' ms' : 'ukjent'));
 			L.push('outputLatency:  ' + (c.outputLatency !== undefined ? (c.outputLatency * 1000).toFixed(1) + ' ms' : 'ukjent'));
 			if (c.getOutputTimestamp) {
@@ -2225,6 +2316,23 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	BT2.appCheck();
 
 	$('diagButton').addEventListener('click', () => { if (BT2.ctx) BT2.ctx.resume().catch(() => {}); $('diag').classList.remove('hidden'); diagUpdate(); });
+	// sound buffer (Windows, Chrome/Edge): the AudioContext is made when the program starts, so the page starts
+	// again with the new choice. (This is on the start screen: nothing has been done in the program yet.)
+	document.querySelectorAll('#bufferRow [data-buffer]').forEach((b) => b.addEventListener('click', () => {
+		const want = b.dataset.buffer;
+		if (want === BT2.winBufferChoice()) return;
+		try {
+			if (want === 'smallest') localStorage.removeItem('bt2-win-buffer');
+			else localStorage.setItem('bt2-win-buffer', want);
+		} catch (e) {
+			BT2.toast('Kunne ikke lagre valget i denne nettleseren');
+			return;
+		}
+		document.querySelectorAll('#bufferRow [data-buffer]').forEach((x) => x.classList.toggle('on', x === b));
+		$('audioMode').textContent = 'Starter på nytt med lydbuffer «' + BT2.WIN_BUFFER_NAMES[want] + '» …';
+		if (!BT2.started) setTimeout(() => location.reload(), 300);
+		else BT2.toast('Gjelder neste gang appen starter');
+	}));
 	$('diagClose').addEventListener('click', () => { $('diag').classList.add('hidden'); BT2.focusCanvas(); });
 	$('pipButton').addEventListener('click', () => {
 		const c = BT2.ctx;
