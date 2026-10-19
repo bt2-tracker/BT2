@@ -34,6 +34,7 @@
 #include "ft2_pattern_ed.h"
 #include "mixer/ft2_mix.h"
 #include "ft2_touchkeys.h"
+#include "ft2_mouse.h"
 
 void webScopesTick(int32_t updates); // ft2_scopes.c
 void webDiskOpStorePathsInConfig(void); // ft2_diskop.c
@@ -708,6 +709,13 @@ EMSCRIPTEN_KEEPALIVE int32_t webSongIsModified(void)
 EMSCRIPTEN_KEEPALIVE int32_t webIsEditingText(void)
 {
 	return (editor.editTextFlag || ui.sysReqShown) ? 1 : 0;
+}
+
+// for the page: does FT2 use the Esc key right now? (a dialog, text being edited, Nibbles, a long job Esc
+// stops, Disk Op's delete/rename mode). If not, Esc leaves fullscreen.
+EMSCRIPTEN_KEEPALIVE int32_t webEscIsUsed(void)
+{
+	return (ui.sysReqShown || editor.editTextFlag || editor.NI_Play || editor.busy || mouse.mode != MOUSE_MODE_NORMAL) ? 1 : 0;
 }
 
 // for automatic tests: the editor state as JSON
