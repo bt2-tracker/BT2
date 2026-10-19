@@ -1,5 +1,6 @@
 #include <winver.h>
 #include "ft2_header.h" // PROG_VER_STR
+#include "bt2_version.h" // BT2_VERSION (BerntTracker)
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION     1,0,0,0
@@ -10,12 +11,12 @@ BEGIN
 	BEGIN
 		BLOCK "040904b0"
 		BEGIN
-			VALUE "FileDescription",  "Fasttracker II clone for Windows"
-			VALUE "ProductName",      "Fasttracker II clone"
-			VALUE "ProductVersion",   PROG_VER_STR
+			VALUE "FileDescription",  "Bernttracker II"
+			VALUE "ProductName",      "Bernttracker II"
+			VALUE "ProductVersion",   BT2_VERSION
 #ifdef _WIN64
-			VALUE "InternalName",     "ft2-clone-win64"
-			VALUE "OriginalFilename", "ft2-clone-win64.exe"
+			VALUE "InternalName",     "Bernttracker II"
+			VALUE "OriginalFilename", "Bernttracker II.exe"
 #else
 			VALUE "InternalName",     "ft2-clone-win32"
 			VALUE "OriginalFilename", "ft2-clone-win32.exe"
@@ -30,4 +31,7 @@ BEGIN
 	END
 END
 
-IDI_MAIN_ICON ICON "gfxdata\\icon\\ft2-clone.ico"
+IDI_MAIN_ICON ICON "gfxdata/icon/bt2.ico" // BerntTracker: the same icon as the web version
+
+// BerntTracker: the logo on the start screen (the same picture as the web version's)
+BT2LOGO RCDATA "../web/bt2-logo.png"

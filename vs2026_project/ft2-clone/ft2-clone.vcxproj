@@ -345,6 +345,12 @@
     <ClCompile Include="..\..\src\ft2_unicode.c" />
     <ClCompile Include="..\..\src\ft2_video.c" />
     <ClCompile Include="..\..\src\ft2_wav_renderer.c" />
+    <ClCompile Include="..\..\src\ft2_wasapi.c" />
+    <ClCompile Include="..\..\src\ft2_asio.cpp" />
+    <ClCompile Include="..\..\src\bt2_winui.c" />
+    <ClCompile Include="..\..\src\bt2_winstart.c" />
+    <ClCompile Include="..\..\src\bt2_winupdate.c" />
+    <ClCompile Include="..\..\src\bt2_winhome.c" />
     <ClCompile Include="..\..\src\gfxdata\ft2_bmp_fonts.c" />
     <ClCompile Include="..\..\src\gfxdata\ft2_bmp_gui.c" />
     <ClCompile Include="..\..\src\gfxdata\ft2_bmp_logo.c" />
@@ -432,6 +438,13 @@
     <ClInclude Include="..\..\src\ft2_unicode.h" />
     <ClInclude Include="..\..\src\ft2_video.h" />
     <ClInclude Include="..\..\src\ft2_wav_renderer.h" />
+    <ClInclude Include="..\..\src\ft2_wasapi.h" />
+    <ClInclude Include="..\..\src\ft2_asio.h" />
+    <ClInclude Include="..\..\src\bt2_winui.h" />
+    <ClInclude Include="..\..\src\bt2_winstart.h" />
+    <ClInclude Include="..\..\src\bt2_winupdate.h" />
+    <ClInclude Include="..\..\src\bt2_winhome.h" />
+    <ClInclude Include="..\..\src\bt2_version.h" />
     <ClInclude Include="..\..\src\mixer\ft2_windowed_sinc.h" />
     <ClInclude Include="..\..\src\mixer\ft2_mix.h" />
     <ClInclude Include="..\..\src\mixer\ft2_mix_macros.h" />

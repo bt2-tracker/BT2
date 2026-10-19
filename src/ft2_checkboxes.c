@@ -122,6 +122,7 @@ checkBox_t checkBoxes[NUM_CHECKBOXES] =
 	{ 113, 128,  78, 12, cbFullScreen },
 	{ 113, 141,  75, 12, cbStretchImage },
 	{ 113, 154,  78, 12, cbPixelFilter },
+	{ 250,   2,  74, 12, cbConfigWinExclusive }, // BerntTracker (Windows): Config > Audio "Exclusive"
 
 	// DISK OP. CHECKBOXES
 	//x,  y,   w,  h,  funcOnUp

@@ -39,6 +39,11 @@
 #include "ft2_hpc.h"
 #include "ft2_smpfx.h"
 #include "mixer/ft2_windowed_sinc.h"
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include "bt2_winstart.h" // BerntTracker (Windows): the start screen, updates and folders, like the web version
+#include "bt2_winupdate.h"
+#include "bt2_winhome.h"
+#endif
 
 static void initializeVars(void);
 static void cleanUpAndExit(void); // never call this inside the main loop
@@ -70,6 +75,10 @@ int main(int argc, char *argv[])
 
 #if defined _WIN32 || defined __APPLE__
 	SDL_version sdlVer;
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	bt2UpdateEarlyStartup(); // BerntTracker: just updated? wait for the old program to close, remove its leftovers
 #endif
 
 	// for finding memory leaks in debug mode with Visual Studio
@@ -165,6 +174,8 @@ int main(int argc, char *argv[])
 
 #ifdef __EMSCRIPTEN__
 	webInit(); // BerntTracker: web folders and settings
+#elif defined _WIN32
+	bt2HomeSetup(); // BerntTracker: the same folders and first-time settings as the web version (Documents\BT2)
 #endif
 
 	if (!setupWindow() || !setupRenderer())
@@ -242,6 +253,15 @@ int main(int argc, char *argv[])
 		showErrorMsgBox("Couldn't create MIDI initialization thread!");
 		cleanUpAndExit();
 		return 1;
+	}
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	// BerntTracker: the same start screen as the web version (updates, sound buffer, fullscreen)
+	if (!bt2StartScreen())
+	{
+		cleanUpAndExit(); // (the window was closed, or the program was updated and starts again)
+		return 0;
 	}
 #endif
 
@@ -367,6 +387,11 @@ static void cleanUpAndExit(void) // never call this inside the main loop!
 		free(editor.midiConfigFileLocationU);
 		editor.midiConfigFileLocationU = NULL;
 	}
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	bt2UpdateShutdown(); // BerntTracker (Windows)
+	bt2HomeShutdown();
 #endif
 
 	closeAudio();

@@ -35,6 +35,8 @@
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
+#include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
+#include "ft2_asio.h" // BerntTracker (Windows): ASIO
 #include "ft2_scrollbars.h"
 #include "ft2_pushbuttons.h"
 #include "ft2_tables.h"
@@ -121,6 +123,15 @@ static void drawFPSCounter(void)
 	if (dRefreshRate < 0.0 || dRefreshRate > 9999.9)
 		dRefreshRate = 9999.9; // prevent number from overflowing text box
 
+	// BerntTracker (Windows): in exclusive mode, the sound card's block instead
+	char audioBufLine[128];
+	snprintf(audioBufLine, sizeof (audioBufLine), "Audio buffer samples: %d (expected %d)", audio.haveSamples, audio.wantSamples);
+#ifdef _WIN32
+	if (winAsioActive() || winExclusiveActive())
+		snprintf(audioBufLine, sizeof (audioBufLine), "%s: %d samples (%.2fms)", winAsioActive() ? "ASIO" : "Exclusive",
+			audio.haveSamples, (audio.haveFreq > 0) ? (audio.haveSamples * 1000.0) / audio.haveFreq : 0.0);
+#endif
+
 	sprintf(fpsTextBuf,
 	             "SDL version: %u.%u.%u\n" \
 	             "Frames per second: %.3f\n" \
@@ -128,7 +139,7 @@ static void drawFPSCounter(void)
 	             "59..61Hz GPU VSync used: %s\n" \
 	             "HPC frequency (timer): %.4fMHz\n" \
 	             "Audio frequency: %.1fkHz (expected %.1fkHz)\n" \
-	             "Audio buffer samples: %d (expected %d)\n" \
+	             "%s\n" \
 	             "Render size: %dx%d (offset %d,%d)\n" \
 	             "Disp. size: %dx%d (window: %dx%d)\n" \
 	             "Render scaling: x=%.4f, y=%.4f\n" \
@@ -143,7 +154,7 @@ static void drawFPSCounter(void)
 	             video.vsync60HzPresent ? "yes" : "no",
 	             hpcFreq.freq64 / (1000.0 * 1000.0),
 	             audio.haveFreq / 1000.0, audio.wantFreq / 1000.0,
-	             audio.haveSamples, audio.wantSamples,
+	             audioBufLine,
 	             video.renderW, video.renderH, video.renderX, video.renderY,
 	             video.displayW, video.displayH, video.windowW, video.windowH,
 	             (double)video.renderW / SCREEN_W, (double)video.renderH / SCREEN_H,

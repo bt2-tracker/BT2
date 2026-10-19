@@ -17,6 +17,16 @@
 #include "ft2_audioselector.h"
 #include "mixer/ft2_mix.h"
 #include "mixer/ft2_windowed_sinc.h"
+#include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
+#include "ft2_asio.h" // BerntTracker (Windows): ASIO (e.g. ASIO4ALL)
+
+#ifdef _WIN32
+#define WIN_EXCLUSIVE (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) // BerntTracker: the sound goes through ft2_wasapi.c
+#define WIN_ASIO (audio.dev == WIN_ASIO_DEVICE_ID) // BerntTracker: the sound goes through ft2_asio.cpp
+#else
+#define WIN_EXCLUSIVE false
+#define WIN_ASIO false
+#endif
 
 // hide POSIX warnings
 #ifdef _MSC_VER
@@ -733,6 +743,13 @@ void lockAudio(void)
 #ifdef __EMSCRIPTEN__
 	if (audio.dev != 0)
 		webAudioLock();
+#elif defined _WIN32
+	if (WIN_ASIO)
+		winAsioLock();
+	else if (WIN_EXCLUSIVE)
+		winExclusiveLock();
+	else if (audio.dev != 0)
+		SDL_LockAudioDevice(audio.dev);
 #else
 	if (audio.dev != 0)
 		SDL_LockAudioDevice(audio.dev);
@@ -746,6 +763,13 @@ void unlockAudio(void)
 #ifdef __EMSCRIPTEN__
 	if (audio.dev != 0)
 		webAudioUnlock();
+#elif defined _WIN32
+	if (WIN_ASIO)
+		winAsioUnlock();
+	else if (WIN_EXCLUSIVE)
+		winExclusiveUnlock();
+	else if (audio.dev != 0)
+		SDL_UnlockAudioDevice(audio.dev);
 #else
 	if (audio.dev != 0)
 		SDL_UnlockAudioDevice(audio.dev);
@@ -798,6 +822,13 @@ void pauseAudio(void) // lock audio + clear voices/scopes + render silence (for 
 #ifdef __EMSCRIPTEN__
 	if (audio.dev > 0)
 		webAudioPause(true);
+#elif defined _WIN32
+	if (WIN_ASIO)
+		winAsioPause(true);
+	else if (WIN_EXCLUSIVE)
+		winExclusivePause(true);
+	else if (audio.dev > 0)
+		SDL_PauseAudioDevice(audio.dev, true);
 #else
 	if (audio.dev > 0)
 		SDL_PauseAudioDevice(audio.dev, true);
@@ -821,6 +852,13 @@ void resumeAudio(void) // unlock audio
 #ifdef __EMSCRIPTEN__
 	if (audio.dev > 0)
 		webAudioPause(false);
+#elif defined _WIN32
+	if (WIN_ASIO)
+		winAsioPause(false);
+	else if (WIN_EXCLUSIVE)
+		winExclusivePause(false);
+	else if (audio.dev > 0)
+		SDL_PauseAudioDevice(audio.dev, false);
 #else
 	if (audio.dev > 0)
 		SDL_PauseAudioDevice(audio.dev, false);
@@ -1091,6 +1129,20 @@ bool setupAudio(bool showErrorMsg)
 	if (audio.dev == 0)
 	{
 #else
+	audio.dev = 0;
+#ifdef _WIN32
+	/* BerntTracker: low latency (Config > Audio "Exclusive", standard): an ASIO driver if one is installed
+	** (e.g. ASIO4ALL), else Windows' exclusive mode, else FT2's normal output as before.
+	*/
+	if (!(config.specialFlags2 & WIN_SHARED_AUDIO))
+	{
+		audio.dev = winAsioOpen(audioCallback, &want, &have, configAudioBufSize);
+		if (audio.dev == 0)
+			audio.dev = winExclusiveOpen(device, audioCallback, &want, &have, configAudioBufSize);
+	}
+
+	if (audio.dev == 0)
+#endif
 	audio.dev = SDL_OpenAudioDevice(device, 0, &want, &have, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
 	if (audio.dev == 0)
 	{
@@ -1217,8 +1269,23 @@ void closeAudio(void)
 #ifdef __EMSCRIPTEN__
 		webAudioClose();
 #else
-		SDL_PauseAudioDevice(audio.dev, true);
-		SDL_CloseAudioDevice(audio.dev);
+		if (WIN_ASIO)
+		{
+#ifdef _WIN32
+			winAsioClose();
+#endif
+		}
+		else if (WIN_EXCLUSIVE)
+		{
+#ifdef _WIN32
+			winExclusiveClose();
+#endif
+		}
+		else
+		{
+			SDL_PauseAudioDevice(audio.dev, true);
+			SDL_CloseAudioDevice(audio.dev);
+		}
 #endif
 		audio.dev = 0;
 	}

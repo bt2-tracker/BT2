@@ -162,6 +162,13 @@ void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepea
 #ifdef __EMSCRIPTEN__
 		return; // BerntTracker (web): a web page can't quit, quitting would only freeze the program
 #else
+		// BerntTracker: in fullscreen, Esc leaves fullscreen first (the same as in the web version)
+		if (video.fullscreen && mouse.mode == MOUSE_MODE_NORMAL && !editor.busy)
+		{
+			toggleFullscreen();
+			return;
+		}
+
 		if (quitBox(false) == 1)
 			editor.throwExit = true;
 

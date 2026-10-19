@@ -1,5 +1,6 @@
-# Bygger nettversjonen av BerntTracker II og legger den ut på GitHub Pages
-# hver gang noe sendes til GitHub (Commit + Sync).
+# Bygger nettversjonen og Windows-programmet av BerntTracker II og legger dem ut på GitHub Pages
+# hver gang noe sendes til GitHub (Commit + Sync). Windows-programmet havner i windows/ på nettsiden,
+# og programmet henter oppdateringer derfra.
 name: Nettversjon
 
 on:
@@ -19,6 +20,13 @@ concurrency:
 env:
   EMSDK_VERSION: 3.1.52
   SDL_TAG: release-2.30.12
+  # Windows-programmet bygges på Linux med llvm-mingw (verktoy/bygg-windows.sh). Faste versjoner med
+  # sjekksum, så programmet blir byte for byte likt når koden er lik.
+  LLVM_MINGW: llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64
+  LLVM_MINGW_URL: https://github.com/mstorsjo/llvm-mingw/releases/download/20241217/llvm-mingw-20241217-ucrt-ubuntu-20.04-x86_64.tar.xz
+  LLVM_MINGW_SHA256: cfe4aac3d245a77d8cd0c41bdcd7971b1002c771d3bba2ac39702733b0fb0c12
+  SDL_WIN_URL: https://github.com/libsdl-org/SDL/releases/download/release-2.32.10/SDL2-devel-2.32.10-mingw.tar.gz
+  SDL_WIN_SHA256: 83a5d74012311edc3c0d40ea6faecbe57ad692aa033fa5dc273cc937e3938ff2
 
 jobs:
   build:
@@ -62,6 +70,30 @@ jobs:
           bash web/build_web.sh "$PWD/sdl-web" "$PWD/sdl-compat" "$PWD/site"
           touch site/.nojekyll
           ls -la site
+
+      - name: Hent verktøy for Windows-programmet fra cache
+        id: wincache
+        uses: actions/cache@v4
+        with:
+          path: wintools-dl
+          key: wintools-${{ env.LLVM_MINGW_SHA256 }}-${{ env.SDL_WIN_SHA256 }}
+
+      - name: Last ned verktøy for Windows-programmet
+        if: steps.wincache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p wintools-dl
+          curl -sSfL --retry 3 -o wintools-dl/llvm-mingw.tar.xz "$LLVM_MINGW_URL"
+          curl -sSfL --retry 3 -o wintools-dl/sdl2-mingw.tar.gz "$SDL_WIN_URL"
+
+      - name: Bygg Windows-programmet
+        run: |
+          echo "$LLVM_MINGW_SHA256  wintools-dl/llvm-mingw.tar.xz" | sha256sum -c -
+          echo "$SDL_WIN_SHA256  wintools-dl/sdl2-mingw.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/wintools"
+          tar -xJf wintools-dl/llvm-mingw.tar.xz -C "$RUNNER_TEMP/wintools"
+          tar -xzf wintools-dl/sdl2-mingw.tar.gz -C "$RUNNER_TEMP/wintools"
+          bash verktoy/bygg-windows.sh "$RUNNER_TEMP/wintools/$LLVM_MINGW" \
+            "$RUNNER_TEMP/wintools/SDL2-2.32.10/x86_64-w64-mingw32" "$RUNNER_TEMP/winbuild" "$PWD/site/windows"
 
       - uses: actions/upload-pages-artifact@v3
         with:

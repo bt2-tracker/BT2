@@ -121,6 +121,7 @@ label.check input { width: 18px; height: 18px; margin: 0; cursor: pointer; }
 }
 #credits { position: fixed; bottom: 10px; left: 0; right: 0; text-align: center; font-size: 11px; color: #5D646C; }
 #credits a { color: #7D92AA; }
+#winDownload a { color: var(--accent); }
 /* start/loading screen: black with the FT2 about-screen starfield behind the 3D logo */
 #loading, #start { background: #000; }
 canvas.stars { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
@@ -162,6 +163,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		<button class="small" data-buffer="large">Stor</button>
 	</div>
 	<div class="mode hidden" id="bufferNote">Minst gir lavest forsinkelse. Knitrer lyden, velg Normal eller Stor (siden starter på nytt).</div>
+	<div class="mode hidden" id="winDownload">Windows: <a href="windows/Bernttracker-II-Windows.zip" download>last ned Bernttracker II som program</a> (lavere forsinkelse med ASIO)</div>
 	<div class="mode" id="versionLine"></div>
 	<div class="appbox" id="appBox">
 		<div id="appStatus">Sjekker om appen er lagret på denne enheten …</div>
@@ -264,7 +266,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.20';
+	const BT2_VERSION = '0.21';
 	const BT2_DATE = '19.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -1638,6 +1640,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				}
 			} catch (e) {}
 			try { if (navigator.maxTouchPoints > 0) $('touchHint').style.display = ''; } catch (e) {}
+			// Windows: the same program as a Windows program (it can use ASIO for a lower latency)
+			try { if (BT2.platform().os === 'windows') $('winDownload').classList.remove('hidden'); } catch (e) {}
 			setTimeout(BT2.installDemos, 1500);
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');

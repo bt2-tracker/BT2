@@ -42,6 +42,9 @@
 #include "ft2_video.h"
 #include "ft2_inst_ed.h"
 #include "ft2_structs.h"
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include "bt2_winhome.h" // BerntTracker (Windows): the BT2 folders in Documents
+#endif
 
 // hide POSIX warnings for chdir()
 #ifdef _MSC_VER
@@ -257,6 +260,15 @@ static void setupInitialPaths(void)
 		FReq_TrkCurPathU[80] = 0;
 		trkPathSet = true;
 	}
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	// BerntTracker: no folder chosen in Config (or it is gone): the BT2 folders, like the web version
+	bt2HomeFillDiskOpPath(0, FReq_ModCurPathU, PATH_MAX, NULL);
+	bt2HomeFillDiskOpPath(1, FReq_InsCurPathU, PATH_MAX, &insPathSet);
+	bt2HomeFillDiskOpPath(2, FReq_SmpCurPathU, PATH_MAX, &smpPathSet);
+	bt2HomeFillDiskOpPath(3, FReq_PatCurPathU, PATH_MAX, &patPathSet);
+	bt2HomeFillDiskOpPath(4, FReq_TrkCurPathU, PATH_MAX, &trkPathSet);
 #endif
 }
 
@@ -2372,6 +2384,38 @@ static void drawDiskOpScreen(void)
 	diskOp_DrawDirectory();
 }
 
+#ifdef _WIN32
+/* BerntTracker (Windows): the program comes with a "Demo Tracks" folder next to it. When the user hasn't set
+** a modules folder of their own, Disk Op. starts there the first time. (When the program is in the source
+** folder's release\win64, the folder two levels up is found instead.) Nothing is written or changed there.
+*/
+static bool chdirToDemoFolder(void)
+{
+	wchar_t exeDir[MAX_PATH];
+	const DWORD len = GetModuleFileNameW(NULL, exeDir, MAX_PATH);
+	if (len == 0 || len >= MAX_PATH)
+		return false;
+
+	wchar_t *slash = wcsrchr(exeDir, L'\\');
+	if (slash == NULL)
+		return false;
+	slash[1] = L'\0';
+
+	const wchar_t *tries[2] = { L"Demo Tracks", L"..\\..\\Demo Tracks" };
+	for (int32_t i = 0; i < 2; i++)
+	{
+		wchar_t path[MAX_PATH + 32];
+		_snwprintf(path, MAX_PATH + 31, L"%ls%ls", exeDir, tries[i]);
+		path[MAX_PATH + 31] = L'\0';
+
+		if (_wchdir(path) == 0)
+			return true;
+	}
+
+	return false;
+}
+#endif
+
 void showDiskOpScreen(void)
 {
 	// if first time opening Disk Op., set initial directory
@@ -2380,7 +2424,13 @@ void showDiskOpScreen(void)
 		ASSERT(FReq_ModCurPathU != NULL);
 
 		// first test if we can change the dir to the one stored in the config (if present)
-		if (FReq_ModCurPathU[0] == '\0' || UNICHAR_CHDIR(FReq_ModCurPathU) != 0)
+#ifdef _WIN32
+		// BerntTracker: no folder of the user's own: the demo songs that come with the program
+		const bool inDemoFolder = (FReq_ModCurPathU[0] == '\0') && chdirToDemoFolder();
+#else
+		const bool inDemoFolder = false;
+#endif
+		if (!inDemoFolder && (FReq_ModCurPathU[0] == '\0' || UNICHAR_CHDIR(FReq_ModCurPathU) != 0))
 		{
 			// nope, couldn't do that, set Disk Op. path to the user's desktop directory
 #ifdef _WIN32

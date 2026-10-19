@@ -9,6 +9,7 @@
 #include "ft2_pattern_ed.h" // exitPatternEditorExtended()
 #include "ft2_config.h"
 #include "ft2_random.h"
+#include "bt2_version.h"
 
 #define NUM_STARS 1500
 #define STARSHINE_ALPHA_PERCENTAGE 33
@@ -252,7 +253,11 @@ void initAboutScreen(void)
 		s->z = (int16_t)(randoml(32768) - 16384);
 	}
 
+#ifdef BT2_BUILD_HEADER // BerntTracker: the release date (the same program, built again, stays byte for byte the same)
+	sprintf(customText3, "v%s (%s)", PROG_VER_STR, BT2_DATE);
+#else
 	sprintf(customText3, "v%s (%s)", PROG_VER_STR, __DATE__);
+#endif
 	customText0X = (SCREEN_W    - textWidth(customText0)) / 2;
 	customText1X = (SCREEN_W    - textWidth(customText1)) / 2;
 	customText2X = (SCREEN_W-8) - textWidth(customText2);

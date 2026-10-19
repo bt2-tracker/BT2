@@ -32,6 +32,8 @@
 #include "ft2_tables.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
+#include "ft2_asio.h" // BerntTracker (Windows): ASIO
 
 config_t config; // globalized
 
@@ -905,7 +907,30 @@ static void setConfigAudioCheckButtonStates(void)
 
 	checkBoxes[CB_CONF_VOL_RAMP].checked = (config.specialFlags & NO_VOLRAMP_FLAG) ? false : true;
 	showCheckBox(CB_CONF_VOL_RAMP);
+
+#ifdef _WIN32
+	// BerntTracker (Windows): exclusive mode, the lowest latency (see ft2_wasapi.c)
+	checkBoxes[CB_CONF_WIN_EXCLUSIVE].checked = (config.specialFlags2 & WIN_SHARED_AUDIO) ? false : true;
+	showCheckBox(CB_CONF_WIN_EXCLUSIVE);
+#endif
 }
+
+#ifdef _WIN32
+// BerntTracker (Windows): "Exclusive" next to "Audio output devices:", and how it went (ASIO or the
+// exclusive mode's block size, or why not)
+static void drawWinExclusiveLabel(void)
+{
+	if (winAsioActive())
+	{
+		textOutShadow(266, 4, PAL_FORGRND, PAL_DSKTOP2, winAsioStatus()); // e.g. "ASIO 1.3ms"
+		return;
+	}
+
+	textOutShadow(266, 4, PAL_FORGRND, PAL_DSKTOP2, "Exclusive");
+	if (!(config.specialFlags2 & WIN_SHARED_AUDIO))
+		textOutShadow(266 + textWidth("Exclusive") + 5, 4, PAL_FORGRND, PAL_DSKTOP2, winExclusiveStatus());
+}
+#endif
 
 static void setConfigLayoutCheckButtonStates(void)
 {
@@ -1177,6 +1202,9 @@ void showConfigScreen(void)
 			showPushButton(PB_CONFIG_MASTVOL_UP);
 
 			textOutShadow(114,   4, PAL_FORGRND, PAL_DSKTOP2, "Audio output devices:");
+#ifdef _WIN32
+			drawWinExclusiveLabel();
+#endif
 			textOutShadow(114,  91, PAL_FORGRND, PAL_DSKTOP2, "Audio input devices (sampling):");
 
 			textOutShadow(114, 157, PAL_FORGRND, PAL_DSKTOP2, "Input rate:");
@@ -1450,6 +1478,7 @@ void hideConfigScreen(void)
 	hideRadioButtonGroup(RB_GROUP_CONFIG_FREQ_SLIDES);
 	hideCheckBox(CB_CONF_MORE_PRECISE_BPM);
 	hideCheckBox(CB_CONF_VOL_RAMP);
+	hideCheckBox(CB_CONF_WIN_EXCLUSIVE);
 	hidePushButton(PB_CONFIG_AUDIO_RESCAN);
 	hidePushButton(PB_CONFIG_AUDIO_OUTPUT_DOWN);
 	hidePushButton(PB_CONFIG_AUDIO_OUTPUT_UP);
@@ -1756,6 +1785,16 @@ void cbConfigVolRamp(void)
 {
 	config.specialFlags ^= NO_VOLRAMP_FLAG;
 	audioSetVolRamp((config.specialFlags & NO_VOLRAMP_FLAG) ? false : true);
+}
+
+void cbConfigWinExclusive(void) // BerntTracker (Windows): exclusive mode on/off, the sound is opened again
+{
+#ifdef _WIN32
+	config.specialFlags2 ^= WIN_SHARED_AUDIO;
+	checkBoxes[CB_CONF_WIN_EXCLUSIVE].checked = (config.specialFlags2 & WIN_SHARED_AUDIO) ? false : true;
+	drawCheckBox(CB_CONF_WIN_EXCLUSIVE);
+	setNewAudioSettings(); // (redraws this screen, with the new block size or why it couldn't be used)
+#endif
 }
 
 // CONFIG LAYOUT

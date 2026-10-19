@@ -39,6 +39,12 @@
     <ClCompile Include="..\..\src\ft2_unicode.c" />
     <ClCompile Include="..\..\src\ft2_video.c" />
     <ClCompile Include="..\..\src\ft2_wav_renderer.c" />
+    <ClCompile Include="..\..\src\ft2_wasapi.c" />
+    <ClCompile Include="..\..\src\ft2_asio.cpp" />
+    <ClCompile Include="..\..\src\bt2_winui.c" />
+    <ClCompile Include="..\..\src\bt2_winstart.c" />
+    <ClCompile Include="..\..\src\bt2_winupdate.c" />
+    <ClCompile Include="..\..\src\bt2_winhome.c" />
     <ClCompile Include="..\..\src\rtmidi\RtMidi.cpp">
       <Filter>rtmidi</Filter>
     </ClCompile>
@@ -263,6 +269,27 @@
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\ft2_wav_renderer.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\ft2_wasapi.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\ft2_asio.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winui.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winstart.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winupdate.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winhome.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_version.h">
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\mixer\ft2_mix.h">

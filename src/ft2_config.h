@@ -74,6 +74,7 @@ enum
 	STRETCH_IMAGE = 4,
 	USE_OS_MOUSE_POINTER = 8,
 	PRECISE_BPM = 16,
+	WIN_SHARED_AUDIO = 32, // BerntTracker (Windows): don't use exclusive mode ("Exclusive" unticked in Config > Audio)
 
 	// windowFlags
 	WINSIZE_AUTO = 1,
@@ -244,6 +245,7 @@ void rbWinSize4x(void);
 void cbToggleAutoSaveConfig(void);
 void cbMorePreciseBPM(void);
 void cbConfigVolRamp(void);
+void cbConfigWinExclusive(void); // BerntTracker (Windows)
 void cbConfigPattStretch(void);
 void cbConfigHexCount(void);
 void cbConfigAccidential(void);

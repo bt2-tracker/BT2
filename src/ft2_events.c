@@ -33,6 +33,9 @@
 #include "ft2_sample_ed_features.h"
 #include "ft2_structs.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
+#include "ft2_audio.h"
+#include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
+#include "ft2_asio.h" // BerntTracker (Windows): ASIO
 
 #define CRASH_TEXT "Oh no! The Fasttracker II clone has crashed...\nA backup of the song was hopefully " \
                    "saved to the current module directory.\n\nPlease report this bug if you can.\n" \
@@ -74,6 +77,13 @@ void handleEvents(void)
 {
 #ifdef __EMSCRIPTEN__
 	webHandlePageRequests(); // BerntTracker (web): e.g. "show this folder" from the search window
+#endif
+
+#ifdef _WIN32
+	// BerntTracker: the sound card went away in exclusive mode (unplugged, changed), or the ASIO driver
+	// asks to be started again (new settings in its panel): open the sound again
+	if (winExclusiveDeviceLost() || winAsioResetRequested())
+		setNewAudioSettings();
 #endif
 
 #ifdef HAS_MIDI
