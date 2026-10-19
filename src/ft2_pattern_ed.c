@@ -817,7 +817,8 @@ static int16_t mouseYToRow(void) // used to get row num from mouse y (for patter
 		// prevent being able to mark the next unseen row on the bottom (in some configurations)
 		const uint8_t mode = (ui.extendedPatternEditor * 4) + (config.ptnStretch * 2) + ui.pattChanScrollShown;
 
-		const int16_t maxRow = (ptnNumRows[mode] + (editor.row - ptnLineSub[mode])) - 1;
+		// BerntTracker: + the rows added on a taller screen (they couldn't be marked with the mouse)
+		const int16_t maxRow = (ptnNumRows[mode] + (editor.row - ptnLineSub[mode])) - 1 + (int16_t)pattExtraLowerRows[config.ptnStretch ? 1 : 0];
 		if (row > maxRow)
 			row = maxRow;
 

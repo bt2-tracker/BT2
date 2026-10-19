@@ -454,7 +454,7 @@ static bool loadPatterns(FILE *f, int32_t numPatterns, uint16_t xmVersion)
 			goto pattCorrupt;
 
 		patternNumRowsTmp[i] = ph.numRows;
-		if (patternNumRowsTmp[i] > MAX_PATT_LEN)
+		if ((uint16_t)ph.numRows > MAX_PATT_LEN) // BerntTracker: numRows is int16_t, 32768..65535 must be "too long" too (was a heap overflow)
 		{
 			patternNumRowsTmp[i] = MAX_PATT_LEN;
 			pattLenWarn = true;

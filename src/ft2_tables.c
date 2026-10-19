@@ -874,6 +874,8 @@ const uint8_t defConfigData[CONFIG_FILE_SIZE] =
 /* BerntTracker: when the screen is taller than 400 lines (keyboard hidden on a tablet),
 ** the pattern editor gets extra rows. The tables above are adjusted from their original values.
 */
+int32_t pattExtraLowerRows[2]; // BerntTracker: rows added below the middle row, per pattern stretch setting
+
 void updatePatternTablesForScreenHeight(int32_t extraH)
 {
 	static bool saved;
@@ -900,6 +902,7 @@ void updatePatternTablesForScreenHeight(int32_t extraH)
 		const int32_t addRows = extraH / rowH;
 		const int32_t addUpper = addRows / 2;
 		const int32_t addLower = addRows - addUpper;
+		pattExtraLowerRows[s] = addLower;
 		const int32_t shift = addUpper * rowH;
 
 		for (int32_t c = 0; c < 2; c++) // channel scroll bar

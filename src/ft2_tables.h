@@ -34,6 +34,7 @@ extern const uint8_t hex2Dec[256];
 extern pattCoord_t pattCoordTable[2][2][2];
 extern pattCoord2_t pattCoord2Table[2][2][2];
 void updatePatternTablesForScreenHeight(int32_t extraH); // BerntTracker
+extern int32_t pattExtraLowerRows[2]; // BerntTracker
 extern markCoord_t markCoordTable[2][2][2];
 extern const uint8_t pattCursorXTab[2 * 4 * 8];
 extern const uint8_t pattCursorWTab[2 * 4 * 8];

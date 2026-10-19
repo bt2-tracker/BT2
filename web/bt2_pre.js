@@ -68,6 +68,10 @@ Module['preRun'].push(function () {
 	wrap('rename', function (a) { return a[0]; }); // the old name disappears
 	Module['bt2Deleted'] = deleted;
 
+	// files written (or renamed to) in this session: the user's latest work, stored even if the stored copy
+	// looks newer by the clock (the device's clock may have been corrected since)
+	var writtenHere = {};
+
 	// a renamed file/folder gets "now" as its time, so it is always stored under the new name
 	// (an older stored file with that name, deleted earlier in this session, must not win)
 	var origRename = FS.rename;
@@ -77,6 +81,7 @@ Module['preRun'].push(function () {
 			var now = Date.now();
 			var touch = function (p) {
 				FS.utime(p, now, now);
+				writtenHere[p] = true;
 				if (FS.isDir(FS.stat(p).mode))
 					FS.readdir(p).forEach(function (n) { if (n !== '.' && n !== '..') touch(p + '/' + n); });
 			};
@@ -91,7 +96,7 @@ Module['preRun'].push(function () {
 	FS.close = function (stream) {
 		var writing = stream && stream.path && (stream.flags & 3) !== 0; // opened for writing (O_WRONLY/O_RDWR)
 		var r = origClose.apply(this, arguments);
-		if (writing) changed(absPath(stream.path));
+		if (writing) { writtenHere[absPath(stream.path)] = true; changed(absPath(stream.path)); }
 		return r;
 	};
 	['mkdir', 'truncate', 'utime', 'chmod', 'symlink'].forEach(function (name) {
@@ -136,7 +141,10 @@ Module['preRun'].push(function () {
 	// back exactly once: when the transaction is done, fails, or is aborted (e.g. the storage is full).
 	// Emscripten's version never reports an abort, and then nothing would be stored for the rest of
 	// the session.
-	var transfer = function (src, dst, callback) {
+	// When writing to IndexedDB, files are stored first, and deletions (also the old name of a renamed
+	// file) happen in a second step, only if every file was stored. A failed write (full storage) can
+	// then never leave a file in neither place: the worst case is an extra copy under the old name.
+	var transfer = function (src, dst, callback, stillCurrent) {
 		var create = [], remove = [];
 		Object.keys(src.entries).forEach(function (key) {
 			var e = src.entries[key], e2 = dst.entries[key];
@@ -145,22 +153,29 @@ Module['preRun'].push(function () {
 		Object.keys(dst.entries).forEach(function (key) { if (!src.entries[key]) remove.push(key); });
 		if (!create.length && !remove.length) return callback(null);
 
-		var finished = false, firstError = null;
-		var finish = function (err) { if (!finished) { finished = true; callback(err || null); } };
-		var note = function (err) { if (err && !firstError) firstError = err; };
 		var db = src.type === 'remote' ? src.db : dst.db;
-		var transaction;
-		try {
-			transaction = db.transaction([IDBFS.DB_STORE_NAME], 'readwrite');
-		} catch (e) {
-			return finish(e); // e.g. the connection was closed
-		}
-		var store = transaction.objectStore(IDBFS.DB_STORE_NAME);
-		transaction.oncomplete = function () { finish(firstError); };
-		transaction.onabort = function () { finish(transaction.error || firstError || new Error('IndexedDB transaction aborted')); };
-		transaction.onerror = function (e) { note((e && e.target && e.target.error) || transaction.error); if (e) e.preventDefault(); };
-
-		try {
+		var run = function (work, done) { // one transaction, reports exactly once
+			var finished = false, firstError = null;
+			var finish = function (err) { if (!finished) { finished = true; done(err || null); } };
+			var note = function (err) { if (err && !firstError) firstError = err; };
+			var transaction;
+			try {
+				transaction = db.transaction([IDBFS.DB_STORE_NAME], 'readwrite');
+			} catch (e) {
+				return finish(e); // e.g. the connection was closed
+			}
+			var store = transaction.objectStore(IDBFS.DB_STORE_NAME);
+			transaction.oncomplete = function () { finish(firstError); };
+			transaction.onabort = function () { finish(transaction.error || firstError || new Error('IndexedDB transaction aborted')); };
+			transaction.onerror = function (e) { note((e && e.target && e.target.error) || transaction.error); if (e) e.preventDefault(); };
+			try {
+				work(store, note);
+			} catch (e) {
+				note(e);
+				try { transaction.abort(); } catch (e2) { finish(e); }
+			}
+		};
+		var creates = function (store, note) {
 			// folders before the files in them
 			create.sort().forEach(function (path) {
 				if (dst.type === 'local') {
@@ -171,19 +186,35 @@ Module['preRun'].push(function () {
 				} else {
 					IDBFS.loadLocalEntry(path, function (err, entry) {
 						if (err) return note(err);
+						// a file's data is often a view on a bigger buffer (room to grow): store only the file's bytes
+						var c = entry.contents;
+						if (c && c.buffer && c.byteLength !== c.buffer.byteLength) entry.contents = c.slice();
 						IDBFS.storeRemoteEntry(store, path, entry, note);
 					});
 				}
 			});
+		};
+		var removes = function (store, note) {
 			// files before their folders
 			remove.sort().reverse().forEach(function (path) {
 				if (dst.type === 'local') IDBFS.removeLocalEntry(path, note);
 				else IDBFS.removeRemoteEntry(store, path, note);
 			});
-		} catch (e) {
-			note(e);
-			try { transaction.abort(); } catch (e2) { finish(e); }
-		}
+		};
+
+		if (dst.type === 'local') // reading the stored files (startup): one go
+			return run(function (store, note) { creates(store, note); removes(store, note); }, callback);
+
+		// (a save that took so long that a newer one was started meanwhile deletes nothing: its view is old)
+		var removeIfCurrent = function () {
+			if (stillCurrent && !stillCurrent()) return callback(new Error('replaced by a newer save'));
+			run(removes, callback);
+		};
+		if (!create.length) return removeIfCurrent();
+		run(creates, function (err) {
+			if (err || !remove.length) return callback(err);
+			removeIfCurrent();
+		});
 	};
 
 	// ---- safer write-back to IndexedDB
@@ -191,19 +222,34 @@ Module['preRun'].push(function () {
 		if (dst.type !== 'remote')
 			return transfer(src, dst, callback); // reading from storage: everything as stored
 
+		// files open for writing right now (a WAV being rendered, or a save the program stopped in the
+		// middle of) are not stored until they are closed: a half-written file must not replace a good copy
+		var openForWriting = {};
+		(FS.streams || []).forEach(function (st) {
+			if (st && st.path && (st.flags & 3) !== 0) openForWriting[absPath(st.path)] = true;
+		});
+
 		var entries = {};
-		Object.keys(src.entries).forEach(function (k) { entries[k] = src.entries[k]; });
+		Object.keys(src.entries).forEach(function (k) {
+			if (openForWriting[k]) {
+				if (dst.entries[k]) entries[k] = dst.entries[k]; // keep what is stored
+				return;
+			}
+			entries[k] = src.entries[k];
+		});
 		Object.keys(dst.entries).forEach(function (k) {
 			var local = src.entries[k], stored = dst.entries[k];
 			if (!local) {
 				if (!wasDeleted(k))
 					entries[k] = stored; // not here, but not deleted by the user either: keep it
-			} else if (local.timestamp && stored.timestamp && local.timestamp.getTime() < stored.timestamp.getTime()) {
-				entries[k] = stored; // stored copy is newer: keep it
+			} else if (!openForWriting[k] && !writtenHere[k] && local.timestamp && stored.timestamp &&
+				local.timestamp.getTime() < stored.timestamp.getTime()) {
+				entries[k] = stored; // stored copy is newer (e.g. saved in another tab): keep it
 			}
 		});
 
-		return transfer({ type: src.type, entries: entries }, dst, callback);
+		var gen = Module['bt2SyncGen'];
+		return transfer({ type: src.type, entries: entries }, dst, callback, function () { return Module['bt2SyncGen'] === gen; });
 	};
 
 	FS.mount(IDBFS, {}, '/home/web_user');

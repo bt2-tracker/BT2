@@ -193,6 +193,7 @@ static int32_t loadSampleThread(void *ptr)
 
 	if (instr[editor.curInstr] == NULL)
 	{
+		unlockMixerCallback(); // BerntTracker: the lock was never released here (the sound stopped for good)
 		loaderMsgBox("Not enough memory!");
 		goto loadError;
 	}

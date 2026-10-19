@@ -160,7 +160,7 @@ bool loadMP3(FILE *f, uint32_t filesize)
 			else
 				src16 = (int16_t *)info.buffer + 1;
 
-			for (uint32_t i = 1; i < sampleLength; i++, src16 += 2)
+			for (uint32_t i = 0; i < sampleLength; i++, src16 += 2) // BerntTracker: was i = 1 (first sample left unset, the rest one step late)
 				dst16[i] = *src16;
 		}
 	}

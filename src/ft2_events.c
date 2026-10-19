@@ -423,6 +423,13 @@ static void handleSDLEvents(void)
 				editor.stopWavRender = true;
 			}
 
+			// BerntTracker: releases still go to the on-screen keyboard (a note could keep sounding, and
+			// the two-finger tap would stop working), and dropped files are freed
+			if (eventType == SDL_FINGERUP || eventType == SDL_WINDOWEVENT)
+				tkHandleEvent(&event);
+			else if (eventType == SDL_DROPFILE && event.drop.file != NULL)
+				SDL_free(event.drop.file);
+
 			continue; // another thread is busy with something, drop input
 		}
 

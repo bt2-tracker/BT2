@@ -112,7 +112,7 @@ static volatile int32_t audioIsPaused = 1;
 static volatile int32_t audioIs16Bit; // FT2's "16-bit" setting: the mixer makes 16-bit samples, turned into floats here
 static int32_t mainLockDepth;
 static float chunkBuffer[CHUNK_MAX * 2];
-static int16_t chunkBuffer16[CHUNK_MAX * 2];
+static int16_t chunkBuffer16[CHUNK_MAX * 4]; // (as many bytes as chunkBuffer, in case a block is ever written as floats)
 static bool engineAttached;
 
 EM_JS(int32_t, bt2_wantedEngine, (int32_t hasWorklet), {
@@ -152,7 +152,7 @@ static EMSCRIPTEN_WEBAUDIO_T audioCtx;
 static volatile int32_t audioLockState; // 0 = free, 1 = main thread, 2 = audio thread
 static volatile int32_t audioReady, audioFailed, workletStarted, audioThreadDead;
 static float interleaved[QUANTUM * 2];
-static int16_t interleaved16[QUANTUM * 2];
+static int16_t interleaved16[QUANTUM * 4]; // (as many bytes as interleaved, in case a block is ever written as floats)
 static volatile uint64_t framesRendered;
 static volatile uint32_t audioGaps; // blocks the mixer could not fill (shown in the sound test)
 
@@ -273,8 +273,8 @@ uint64_t webAudioPerfCounter(void)
 	do
 	{
 		seq = __atomic_load_n(&anchorSeq, __ATOMIC_ACQUIRE);
-		counter = anchorCounter;
-		frames = anchorFrames;
+		counter = __atomic_load_n(&anchorCounter, __ATOMIC_SEQ_CST); // (atomic: plain loads could be done after the check below on ARM)
+		frames = __atomic_load_n(&anchorFrames, __ATOMIC_SEQ_CST);
 	}
 	while ((seq & 1) || seq != __atomic_load_n(&anchorSeq, __ATOMIC_ACQUIRE));
 
@@ -285,8 +285,8 @@ uint64_t webAudioPerfCounter(void)
 static void updateAudioClockAnchor(void) // main thread, once per frame
 {
 	__atomic_add_fetch(&anchorSeq, 1, __ATOMIC_ACQ_REL);
-	anchorCounter = SDL_GetPerformanceCounter();
-	anchorFrames = __atomic_load_n(&framesRendered, __ATOMIC_SEQ_CST);
+	__atomic_store_n(&anchorCounter, SDL_GetPerformanceCounter(), __ATOMIC_SEQ_CST);
+	__atomic_store_n(&anchorFrames, __atomic_load_n(&framesRendered, __ATOMIC_SEQ_CST), __ATOMIC_SEQ_CST);
 	__atomic_add_fetch(&anchorSeq, 1, __ATOMIC_ACQ_REL);
 }
 
@@ -354,12 +354,24 @@ EMSCRIPTEN_KEEPALIVE void webStartWorkletThread(void) // called from JS when swi
 
 EM_JS(void, bt2_workletFailed, (void), { setTimeout(() => globalThis.BT2.workletFailed(), 0); });
 
+/* The audio thread stopped in the middle of mixing (an error there): flags it sets for a moment would
+** stay set, and the main thread waits for them in a few places (pauseMusic() etc.), which would freeze it.
+*/
+static void clearAudioThreadFlags(void)
+{
+	replayerBusy = false;
+	audio.callbackOngoing = false;
+	pattQueueClearing = false;
+	chQueueClearing = false;
+}
+
 // called from JS when the audio thread has stopped (processorerror): it can never let go of the lock then
 EMSCRIPTEN_KEEPALIVE void webAudioThreadDied(void)
 {
 	audioThreadDead = 1;
 	int32_t expected = 2;
 	__atomic_compare_exchange_n(&audioLockState, &expected, 0, false, __ATOMIC_ACQ_REL, __ATOMIC_RELAXED);
+	clearAudioThreadFlags();
 }
 
 void webAudioLock(void)
@@ -382,6 +394,7 @@ void webAudioLock(void)
 			{
 				audioThreadDead = 1;
 				__atomic_store_n(&audioLockState, 1, __ATOMIC_RELEASE);
+				clearAudioThreadFlags();
 				bt2_workletFailed();
 				break;
 			}
@@ -508,6 +521,7 @@ EMSCRIPTEN_KEEPALIVE void webSetAudioMode(int32_t mode)
 	audioMode = mode;
 	if (mode == 0)
 		updateAudioClockAnchor();
+	audio.resetSyncTickTimeFlag = true; // line scopes/pattern up with the new engine's timing
 	webAudioUnlock();
 }
 
@@ -546,7 +560,7 @@ SDL_AudioDeviceID webAudioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *
 
 void webAudioClose(void)
 {
-	audioIsPaused = 1; // the context is kept for the next open
+	webAudioPause(true); // (under the lock: the mixer is surely not running when the buffers are freed after this)
 }
 
 void webAudioPause(bool pause)
@@ -749,6 +763,10 @@ void webLongTaskYield(void)
 	{
 		if (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_KEYDOWN)
 			editor.stopWavRender = true;
+		else if (ev.type == SDL_FINGERUP || ev.type == SDL_WINDOWEVENT)
+			tkHandleEvent(&ev); // (on-screen keyboard: releases)
+		else if (ev.type == SDL_DROPFILE && ev.drop.file != NULL)
+			SDL_free(ev.drop.file);
 	}
 
 	handleRedrawing();

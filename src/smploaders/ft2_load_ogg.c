@@ -74,7 +74,8 @@ bool loadOGG(FILE *f, uint32_t filesize)
 	OggVorbis_File vorbis;
 	sample_t *s = &tmpSmp;
 
-	if (ov_open_callbacks(f, &vorbis, NULL, 0, OV_CALLBACKS_DEFAULT) != 0)
+	// BerntTracker: NOCLOSE, the caller closes the file (ov_clear() closed it too: a double fclose = double free)
+	if (ov_open_callbacks(f, &vorbis, NULL, 0, OV_CALLBACKS_NOCLOSE) != 0)
 	{
 		loaderMsgBox("Error loading sample: The sample is empty or corrupt!");
 		return false;

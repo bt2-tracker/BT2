@@ -83,6 +83,19 @@ static const uint8_t xmEfxTab[] = { 10, 16, 17, 25 }; // A, G, H, P
 static uint16_t trackList[256*32];
 static note_t *decodedTrack[MAX_TRACKS];
 
+// BerntTracker: frees all decoded tracks and clears the pointers (stale pointers were left behind before)
+static void freeDecodedTracks(void)
+{
+	for (int32_t i = 0; i < MAX_TRACKS; i++)
+	{
+		if (decodedTrack[i] != NULL)
+		{
+			free(decodedTrack[i]);
+			decodedTrack[i] = NULL;
+		}
+	}
+}
+
 static char *readString(FILE *f)
 {
 	uint16_t length;
@@ -160,7 +173,12 @@ bool loadBEM(FILE *f, uint32_t filesize)
 	if (songName == NULL)
 		return false;
 
-	strcpy(songTmp.name, songName);
+	// BerntTracker: the name can be up to 512 chars in the file, but the song name holds 20 (was strcpy)
+	uint32_t songNameLen = (uint32_t)strlen(songName);
+	if (songNameLen > 20)
+		songNameLen = 20;
+
+	memcpy(songTmp.name, songName, songNameLen);
 	free(songName);
 	uint16_t strLength;
 	fread(&strLength, 2, 1, f);
@@ -168,7 +186,8 @@ bool loadBEM(FILE *f, uint32_t filesize)
 	fread(&strLength, 2, 1, f);
 	fseek(f, strLength, SEEK_CUR);
 
-	if (header.numpos > 256 || header.numpat > 256 || header.numchn > 32 || header.numtrk > MAX_TRACKS)
+	// BerntTracker: numins > MAX_INST would write past instrTmp[]
+	if (header.numpos > 256 || header.numpat > 256 || header.numchn > 32 || header.numtrk > MAX_TRACKS || header.numins > MAX_INST)
 	{
 		loaderMsgBox("Error loading BEM: The module is corrupt!");
 		return false;
@@ -195,6 +214,12 @@ bool loadBEM(FILE *f, uint32_t filesize)
 		instr_t *ins = instrTmp[1 + i];
 
 		ins->numSamples = (uint8_t)fgetc(f);
+		if (ins->numSamples > MAX_SMP_PER_INST) // BerntTracker: would write past ins->smp[]
+		{
+			loaderMsgBox("Error loading BEM: The module is corrupt!");
+			return false;
+		}
+
 		fread(ins->note2SampleLUT, 1, 96, f);
 
 		ins->volEnvFlags = (uint8_t)fgetc(f);
@@ -276,13 +301,15 @@ bool loadBEM(FILE *f, uint32_t filesize)
 		{
 			loaderMsgBox("Error loading BEM: This module is corrupt!");
 trackError:
-			for (int32_t j = 0; j < i; j++)
-				free(decodedTrack[j]);
-
+			freeDecodedTracks();
 			return false;
 		}
 
-		decodedTrack[i] = (note_t *)calloc(rowsInPattern[i], sizeof (note_t));
+		/* BerntTracker: was calloc(rowsInPattern[i]), but i is a track number, not a pattern number,
+		** so tracks got too few rows (heap overflow, even with valid files). A track is never used
+		** for more than MAX_PATT_LEN rows, so allocate that and never decode past it.
+		*/
+		decodedTrack[i] = (note_t *)calloc(MAX_PATT_LEN, sizeof (note_t));
 		if (decodedTrack[i] == NULL)
 		{
 			loaderMsgBox("Not enough memory!");
@@ -290,6 +317,7 @@ trackError:
 		}
 
 		note_t *out = decodedTrack[i];
+		note_t *outEnd = out + MAX_PATT_LEN; // BerntTracker
 
 		// decode track
 
@@ -308,6 +336,12 @@ trackError:
 
 			for (int32_t j = 0; j <= repeat; j++, out++)
 			{
+				if (out >= outEnd) // BerntTracker: more rows than any pattern can use, skip the rest
+				{
+					fseek(f, opcodeEnd, SEEK_SET);
+					break;
+				}
+
 				fseek(f, opcodeStart, SEEK_SET);
 				while ((uint32_t)ftell(f) < opcodeEnd)
 				{
@@ -361,13 +395,18 @@ trackError:
 		if (!allocateTmpPatt(i, numRows))
 		{
 			loaderMsgBox("Not enough memory!");
+			freeDecodedTracks();
 			return false;
 		}
 
 		note_t *dst = patternTmp[i];
 		for (int32_t ch = 0; ch < header.numchn; ch++)
 		{
-			note_t *src = (note_t *)decodedTrack[trackList[(i * header.numchn) + ch]];
+			const uint16_t trackNum = trackList[(i * header.numchn) + ch];
+			if (trackNum >= header.numtrk) // BerntTracker: bad track number in a corrupt file (read past decodedTrack[])
+				continue;
+
+			note_t *src = (note_t *)decodedTrack[trackNum];
 			if (src != NULL)
 			{
 				for (int32_t row = 0; row < numRows; row++)
@@ -375,6 +414,8 @@ trackError:
 			}
 		}
 	}
+
+	freeDecodedTracks(); // BerntTracker: the tracks are copied into the patterns now (they were never freed before)
 
 	// samples
 

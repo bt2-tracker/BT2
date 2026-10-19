@@ -1170,7 +1170,23 @@ bool tkHandleEvent(SDL_Event *event)
 				return true;
 			}
 
-			// a finger on the FT2 screen: two of them quickly = show/hide the keyboard
+			/* A finger on the FT2 screen: two of them quickly = show/hide the keyboard.
+			** If fewer fingers are down than we counted, a release was missed: start counting again
+			** from what is really down. ("Down" here = down in SDL, or lifted with the release still
+			** waiting in the event queue: those are counted until their release is handled.)
+			*/
+			SDL_Event queued[MAX_POINTERS];
+			const int32_t releasesQueued = SDL_PeepEvents(queued, MAX_POINTERS, SDL_PEEKEVENT, SDL_FINGERUP, SDL_FINGERUP);
+			int32_t fingersDown = SDL_GetNumTouchFingers(event->tfinger.touchId) + ((releasesQueued > 0) ? releasesQueued : 0);
+			for (int32_t i = 0; i < MAX_POINTERS; i++)
+			{
+				if (pointers[i].active && pointers[i].id != MOUSE_POINTER_ID)
+					fingersDown--; // (fingers on the keyboard)
+			}
+
+			if (screenFingers >= fingersDown)
+				screenFingers = (fingersDown > 0) ? (fingersDown - 1) : 0;
+
 			screenFingers++;
 			if (screenFingers == 1)
 			{

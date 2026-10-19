@@ -974,7 +974,12 @@ static void audioCallback(void *userdata, Uint8 *stream, int len)
 		samplesLeft -= samplesToMix;
 	}
 
-	if (config.specialFlags & BITDEPTH_16)
+	/* BerntTracker: was "if (config.specialFlags & BITDEPTH_16)". Config > Audio changes that flag
+	** before the sound is paused, so a callback running at that moment (the low-latency engine mixes
+	** on its own thread) wrote floats into a buffer sized for 16-bit samples. Use the format the
+	** stream was set up with.
+	*/
+	if (smpShiftValue == 2)
 		sendSamples16BitStereo(stream, len);
 	else
 		sendSamples32BitFloatStereo(stream, len);
@@ -1029,7 +1034,10 @@ static void calcAudioLatencyVars(int32_t audioBufferSize, int32_t audioFreq)
 void webAudioSetLatencyFrames(int32_t frames) // BerntTracker (web): the sound engine changed, keep scopes/pattern in sync
 {
 	if (frames > 0 && audio.haveFreq > 0)
+	{
 		calcAudioLatencyVars(frames, audio.haveFreq);
+		audio.resetSyncTickTimeFlag = true; // use the new delay from the next tick on
+	}
 }
 #endif
 

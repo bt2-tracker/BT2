@@ -587,8 +587,26 @@ static bool deleteDirRecursive(UNICHAR *strU)
 }
 #endif
 
+#ifdef __EMSCRIPTEN__
+/* BerntTracker (web): a new name for a file or folder must be a plain name in the folder it is in.
+** With "/" or ".." a rename could move it (or a whole folder) out of the user's folders, where it
+** would look deleted.
+*/
+static bool webIsPlainName(const char *name)
+{
+	if (name == NULL || name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+		return false;
+
+	return strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
+}
+#endif
+
 static bool makeDirAnsi(char *str)
 {
+#ifdef __EMSCRIPTEN__
+	if (!webIsPlainName(str))
+		return false;
+#endif
 	UNICHAR *strU = cp850ToUnichar(str);
 	if (strU == NULL)
 		return false;
@@ -609,6 +627,12 @@ static bool renameAnsi(UNICHAR *oldNameU, char *newName)
 		return false;
 
 #ifdef __EMSCRIPTEN__
+	if (!webIsPlainName(newName))
+	{
+		free(newNameU);
+		return false;
+	}
+
 	struct stat st;
 	if (stat(newNameU, &st) == 0) // BerntTracker (web): like FT2 on Windows, never rename onto an existing name
 	{
@@ -1200,6 +1224,10 @@ static void fileListPressed(int32_t index)
 				break;
 			}
 #endif
+#ifdef __EMSCRIPTEN__
+			if (UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR) == 0)
+				break; // BerntTracker (web): never rename ".." (it is the folder above: everything in it would move)
+#endif
 			if (dirEntry->isDir || UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR)) // don't handle ".." dir
 			{
 				nameTmp = unicharToCp850(dirEntry->nameU, true);
@@ -1221,6 +1249,13 @@ static void fileListPressed(int32_t index)
 						break;
 					}
 
+#ifdef __EMSCRIPTEN__
+					if (!webIsPlainName(FReq_NameTemp))
+					{
+						okBox(0, "System message", "The name can't contain / or \\, and can't be \".\" or \"..\"!", NULL);
+						break;
+					}
+#endif
 					if (!renameAnsi(dirEntry->nameU, FReq_NameTemp))
 					{
 						if (dirEntry->isDir)
@@ -2521,6 +2556,13 @@ void pbDiskOpMakeDir(void)
 			return;
 		}
 
+#ifdef __EMSCRIPTEN__
+		if (!webIsPlainName(FReq_NameTemp))
+		{
+			okBox(0, "System message", "The name can't contain / or \\, and can't be \".\" or \"..\"!", NULL);
+			return;
+		}
+#endif
 		if (makeDirAnsi(FReq_NameTemp))
 			editor.diskOpReadDir = true;
 		else

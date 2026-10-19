@@ -50,13 +50,35 @@ static SDL_Thread *thread;
 // globals
 int32_t smpEd_Rx1 = 0, smpEd_Rx2 = 0;
 
+/* BerntTracker: number of bytes to allocate for a sample. Returns false if the length is negative or
+** the size would overflow. Broken module files can give such lengths, and the old "length+padding"
+** math could then wrap around to a tiny buffer that the loader overflowed when reading the sample.
+*/
+static bool getSmpDataBytes(int32_t length, bool sample16Bit, size_t *bytes)
+{
+	if (length < 0)
+		return false;
+
+	const uint64_t numBytes = ((uint64_t)length << (sample16Bit ? 1 : 0)) + SAMPLE_PAD_LENGTH;
+	if (numBytes > SIZE_MAX)
+		return false;
+
+	*bytes = (size_t)numBytes;
+	return true;
+}
+
 // allocs sample with proper alignment and padding for branchless resampling interpolation
 bool allocateSmpData(sample_t *s, int32_t length, bool sample16Bit)
 {
-	if (sample16Bit)
-		length <<= 1;
+	size_t bytes;
+	if (!getSmpDataBytes(length, sample16Bit, &bytes))
+	{
+		s->origDataPtr = NULL;
+		s->dataPtr = NULL;
+		return false;
+	}
 
-	s->origDataPtr = (int8_t *)malloc(length + SAMPLE_PAD_LENGTH);
+	s->origDataPtr = (int8_t *)malloc(bytes);
 	if (s->origDataPtr == NULL)
 	{
 		s->dataPtr = NULL;
@@ -69,10 +91,11 @@ bool allocateSmpData(sample_t *s, int32_t length, bool sample16Bit)
 
 bool allocateSmpDataPtr(smpPtr_t *sp, int32_t length, bool sample16Bit)
 {
-	if (sample16Bit)
-		length <<= 1;
+	size_t bytes;
+	if (!getSmpDataBytes(length, sample16Bit, &bytes))
+		return false;
 
-	int8_t *newPtr = (int8_t *)malloc(length + SAMPLE_PAD_LENGTH);
+	int8_t *newPtr = (int8_t *)malloc(bytes);
 	if (newPtr == NULL)
 		return false;
 
@@ -88,10 +111,11 @@ bool reallocateSmpData(sample_t *s, int32_t length, bool sample16Bit)
 	if (s->origDataPtr == NULL)
 		return allocateSmpData(s, length, sample16Bit);
 
-	if (sample16Bit)
-		length <<= 1;
+	size_t bytes;
+	if (!getSmpDataBytes(length, sample16Bit, &bytes))
+		return false;
 
-	int8_t *newPtr = (int8_t *)realloc(s->origDataPtr, length + SAMPLE_PAD_LENGTH);
+	int8_t *newPtr = (int8_t *)realloc(s->origDataPtr, bytes);
 	if (newPtr == NULL)
 		return false;
 
@@ -107,10 +131,11 @@ bool reallocateSmpDataPtr(smpPtr_t *sp, int32_t length, bool sample16Bit)
 	if (sp->origPtr == NULL)
 		return allocateSmpDataPtr(sp, length, sample16Bit);
 
-	if (sample16Bit)
-		length <<= 1;
+	size_t bytes;
+	if (!getSmpDataBytes(length, sample16Bit, &bytes))
+		return false;
 
-	int8_t *newPtr = (int8_t *)realloc(sp->origPtr, length + SAMPLE_PAD_LENGTH);
+	int8_t *newPtr = (int8_t *)realloc(sp->origPtr, bytes);
 	if (newPtr == NULL)
 		return false;
 
@@ -210,7 +235,8 @@ void sanitizeSample(sample_t *s)
 	s->relativeNote = CLAMP(s->relativeNote, -48, 71);
 	s->length = CLAMP(s->length, 0, MAX_SAMPLE_LEN);
 
-	if (s->loopStart < 0 || s->loopLength <= 0 || s->loopStart+s->loopLength > s->length)
+	// BerntTracker: 64-bit sum, a broken file's loop values could overflow and slip through as a "valid" loop
+	if (s->loopStart < 0 || s->loopLength <= 0 || (int64_t)s->loopStart+s->loopLength > s->length)
 	{
 		s->loopStart = 0;
 		s->loopLength = 0;

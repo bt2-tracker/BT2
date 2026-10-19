@@ -101,6 +101,8 @@ button.small {
 	color: var(--text); background: #3B4045; border: 1px solid #596169;
 }
 #diag { z-index: 15; justify-content: flex-start; padding-top: 40px; overflow-y: auto; }
+#crash { z-index: 40; background: rgba(20,24,28,.97); }
+#crashDetail { font: 12px ui-monospace, Menlo, monospace; color: #5D646C; max-width: 560px; overflow-wrap: anywhere; }
 #diag pre { font: 14px/1.5 ui-monospace, Menlo, monospace; text-align: left; background: #12161A; padding: 12px 16px; border-radius: 8px; min-width: 300px; }
 .row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .appbox { max-width: 560px; font-size: 13px; color: var(--dim); line-height: 1.45; background: #23272B;
@@ -178,6 +180,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		<button class="small" id="backupButton">Sikkerhetskopi (zip)</button>
 	</div>
 	<div class="mode hidden" id="backupHint" style="color:#F0D070;max-width:560px"></div>
+	<div class="mode hidden" id="safariWarning" style="color:#F0B060;max-width:560px"></div>
 	<div id="credits">
 		Basert på <a href="https://github.com/8bitbubsy/ft2-clone" target="_blank" rel="noopener">ft2-clone</a> av Olav «8bitbubsy» Sørensen (BSD-3).
 		Grafikk av Magnus «Vogue» Högdahl (CC BY-NC-SA 4.0).
@@ -206,7 +209,16 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	<div class="mode">Trykk for å fortsette likevel</div>
 </div>
 
-<div id="toast"></div>
+<div id="crash" class="overlay hidden" role="alertdialog" aria-modal="true" aria-labelledby="crashTitle">
+	<div class="logo" id="crashTitle" style="font-size:24px">Noe gikk galt</div>
+	<div class="status" id="crashText"></div>
+	<div class="row">
+		<button class="big" id="crashRestart">Start på nytt</button>
+		<button class="small hidden" id="crashWait">Vent litt</button>
+	</div>
+	<div class="mode" id="crashDetail"></div>
+</div>
+<div id="toast" aria-live="polite"></div>
 <div id="storageBanner" class="hidden" role="alert"></div>
 <div id="search" class="hidden" role="dialog" aria-label="Søk">
 	<div class="ft-panel">
@@ -242,8 +254,8 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.17';
-	const BT2_DATE = '18.10.2026';
+	const BT2_VERSION = '0.18';
+	const BT2_DATE = '19.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
 
@@ -263,10 +275,10 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 		// screen refresh, so notes start as fast as possible.
 		wake: null,
 		waitFrame() {
-			BT2.pump(); // compat engine: top the sound queue up right after the program's frame ...
+			BT2.safePump(); // compat engine: top the sound queue up right after the program's frame ...
 			return new Promise((resolve) => {
 				let done = false;
-				const finish = () => { if (!done) { done = true; BT2.wake = null; BT2.pump(); resolve(); } }; // ... and right before the next
+				const finish = () => { if (!done) { done = true; BT2.wake = null; BT2.safePump(); resolve(); } }; // ... and right before the next
 				BT2.wake = finish;
 				const tick = (t) => {
 					if (done) return;
@@ -340,10 +352,14 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 						document.addEventListener(ev, resume, { capture: true, passive: true }));
 				}
 				const name = BT2.ENGINES[code] || 'compat';
-				if (!(await BT2.attachEngine(name)) && name !== 'sp') {
-					Module._webSetAudioMode(2);
-					await BT2.attachEngine('sp');
-				}
+				await BT2.engineTask(async () => {
+					let ok = await BT2.attachEngine(name);
+					if (!ok && name !== 'sp') {
+						Module._webSetAudioMode(2);
+						ok = await BT2.attachEngine('sp');
+					}
+					if (!ok) setTimeout(() => BT2.toast('Lyden kunne ikke startes i denne nettleseren'), 3000);
+				});
 				return ctx.sampleRate;
 			} catch (e) {
 				console.error('Audio failed', e);
@@ -357,7 +373,10 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			if (BT2.node) {
 				try { BT2.node.disconnect(); } catch (e) {}
 				if (BT2.audioMode === 'sp') BT2.node.onaudioprocess = null;
-				if (BT2.audioMode === 'compat') { try { BT2.node.port.onmessage = null; } catch (e) {} }
+				if (BT2.audioMode === 'compat') {
+					try { BT2.node.port.onmessage = null; } catch (e) {}
+					try { BT2.node.port.postMessage('stop'); } catch (e) {} // (else the old queue keeps running on the audio thread)
+				}
 			}
 			BT2.node = null;
 			BT2.compatNode = null;
@@ -389,8 +408,21 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			}
 		},
 
+		// Engine changes run one at a time, in the order they were asked for. Two quick taps on the engine
+		// buttons, the switch right after the start tap or a failing engine could otherwise overlap, and
+		// leave two engines connected at once (the label showing the wrong one), or a queue nobody fills.
+		engineChain: Promise.resolve(),
+		engineTask(fn) {
+			const p = BT2.engineChain.then(fn, fn);
+			BT2.engineChain = p.then(() => {}, () => {});
+			return p;
+		},
+
 		// picked in the sound test: switch right away, remember for next time
-		async switchEngine(name, quiet, dontRemember) {
+		switchEngine(name, quiet, dontRemember) {
+			return BT2.engineTask(() => BT2.doSwitchEngine(name, quiet, dontRemember));
+		},
+		async doSwitchEngine(name, quiet, dontRemember) {
 			if (!BT2.ctx) return;
 			if (!quiet) BT2.deferredEngine = null;
 			if (name === 'worklet' && !BT2.started && BT2.hasWorklet) {
@@ -492,7 +524,8 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 			const sr = BT2.ctx ? BT2.ctx.sampleRate : 48000;
 			BT2.compatMin = samples <= 512 ? 256 : Math.round(samples * sr / 48000 / 128) * 128;
 			BT2.compatApply();
-			if (BT2.audioMode === 'sp' && BT2.spWanted() !== BT2.spSize) setTimeout(() => BT2.attachEngine('sp'), 0); // new SP block size
+			if (BT2.audioMode === 'sp' && BT2.spWanted() !== BT2.spSize) // new SP block size
+				setTimeout(() => BT2.engineTask(() => (BT2.audioMode === 'sp' && BT2.spWanted() !== BT2.spSize) ? BT2.attachEngine('sp') : null), 0);
 		},
 		latencyChoiceName() {
 			return BT2.latencyChoice <= 512 ? 'Smaller' : BT2.latencyChoice <= 1024 ? 'Medium' : 'Bigger';
@@ -558,10 +591,14 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 class BT2Queue extends AudioWorkletProcessor {
 	constructor() {
 		super(); this.q = []; this.pos = 0; this.consumed = 0; this.n = 0; this.frames = 0; this.low = 1e9;
-		this.events = 0; this.dry = true; this.lastL = 0; this.lastR = 0; this.fade = 0;
-		this.port.onmessage = (e) => { this.q.push(e.data); this.frames += e.data.length >> 1; };
+		this.events = 0; this.dry = true; this.lastL = 0; this.lastR = 0; this.fade = 0; this.stopped = false;
+		this.port.onmessage = (e) => {
+			if (e.data === 'stop') { this.stopped = true; this.q = []; return; } // another engine took over
+			this.q.push(e.data); this.frames += e.data.length >> 1;
+		};
 	}
 	process(inputs, outputs) {
+		if (this.stopped) return false;
 		const L = outputs[0][0], R = outputs[0][1] || outputs[0][0];
 		if (this.frames < this.low) this.low = this.frames; // the least that was left in the queue
 		for (let i = 0; i < L.length; i++) {
@@ -637,8 +674,23 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				}
 			};
 			BT2.compatNode = node;
-			BT2.pumpTimer = setInterval(BT2.pump, 4);
+			BT2.pumpTimer = setInterval(BT2.safePump, 4);
 			return node;
+		},
+		// An error while mixing must never stop the program's frames: the screen would freeze for good.
+		// The same error three times in a row: stop this sound engine (and say so).
+		pumpErrors: 0,
+		safePump() {
+			try {
+				BT2.pump();
+				BT2.pumpErrors = 0;
+			} catch (e) {
+				console.error('sound', e);
+				if (++BT2.pumpErrors < 3) return;
+				BT2.pumpErrors = 0;
+				try { BT2.detachEngine(); } catch (e2) {}
+				BT2.toast('Lyden stoppet på grunn av en feil. Lagre låta (gjerne under nytt navn) og start appen på nytt.');
+			}
 		},
 		pump() {
 			if (!BT2.compatNode || !BT2.ctx || BT2.ctx.state !== 'running') return;
@@ -695,6 +747,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			if (!Module.bt2FS || !Module.bt2StorageOK || BT2.readOnly) return;
 			if (BT2.syncing) { BT2.syncAgain = true; return; }
 			BT2.syncing = true;
+			Module.bt2SyncGen = (Module.bt2SyncGen || 0) + 1; // (see transfer() in bt2_pre.js)
 			Module.bt2Dirty = false;
 			BT2.lastFullSync = Date.now();
 			let finished = false;
@@ -708,12 +761,16 @@ registerProcessor('bt2-queue', BT2Queue);`;
 					Module.bt2Dirty = true; // try again
 					BT2.syncFailures = (BT2.syncFailures || 0) + 1;
 					try { Module.bt2ForgetDB(); } catch (e) {} // open the storage again next time
-					if (BT2.syncFailures >= 2) BT2.storageBanner('sync');
+					const full = err && (err.name === 'QuotaExceededError' || /quota|full|space/i.test(String(err.message || err)));
+					if (full) BT2.storageBanner('full');
+					else if (BT2.syncFailures >= 2) BT2.storageBanner('sync');
 					clearTimeout(BT2.syncRetryTimer);
-					BT2.syncRetryTimer = setTimeout(() => BT2.syncFiles(), BT2.syncFailures < 4 ? 1500 : 15000);
+					BT2.syncRetryTimer = setTimeout(() => { BT2.syncRetryTimer = 0; BT2.syncFiles(); }, BT2.syncFailures < 4 ? 1500 : 15000);
 				} else {
 					BT2.syncFailures = 0;
-					if (BT2.bannerKind === 'sync') BT2.storageBanner(null);
+					clearTimeout(BT2.syncRetryTimer);
+					BT2.syncRetryTimer = 0;
+					if (BT2.bannerKind === 'sync' || BT2.bannerKind === 'full') BT2.storageBanner(null);
 				}
 				if (BT2.syncAgain) { BT2.syncAgain = false; BT2.syncFiles(); }
 			};
@@ -722,10 +779,15 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			try { Module.bt2FS.syncfs(false, end); } catch (e) { end(e); }
 		},
 		syncSoon() {
-			if (BT2.syncSoonTimer) return;
+			if (BT2.readOnly) { // this copy stores nothing: say so again whenever something is saved
+				if (Module.bt2FS && Module.bt2StorageOK && $('storageBanner').classList.contains('hidden')) BT2.storageBanner('readonly');
+				return;
+			}
+			if (BT2.syncSoonTimer || BT2.syncRetryTimer) return; // (after a failed save the retry picks the change up)
 			BT2.syncSoonTimer = setTimeout(() => { BT2.syncSoonTimer = 0; BT2.syncFiles(); }, 300);
 		},
 		syncIfChanged() { // from the program every few seconds
+			if (BT2.syncRetryTimer) return; // a failed save is tried again on its own schedule
 			if (Module.bt2Dirty || Date.now() - (BT2.lastFullSync || 0) > 30000) BT2.syncFiles();
 		},
 		// the red message at the top: 'sync' (saving fails right now), 'load' (stored files couldn't be read),
@@ -737,9 +799,47 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			clearTimeout(BT2.bannerTimer);
 			if (!kind) { b.classList.add('hidden'); return; }
 			b.textContent = kind === 'sync' ? '⚠ Filene dine blir ikke lagret akkurat nå. Prøver igjen … (trykk her for å prøve med en gang)'
+				: kind === 'full' ? '⚠ Lagringsplassen er full, så filene dine blir ikke lagret. Slett store filer du ikke trenger (f.eks. WAV), ' +
+					'eller trykk her for å ta en sikkerhetskopi (zip) av alt nå.'
 				: kind === 'load' ? '⚠ De lagrede filene dine kunne ikke leses, så ingenting lagres i denne økten. Lukk appen helt og åpne den igjen.'
 				: '⚠ Appen er åpen et annet sted. Denne kopien lagrer ingenting – bruk den andre, eller lukk den og åpne denne på nytt.';
 			b.classList.remove('hidden');
+		},
+
+		// ---------- when the program itself stops with an error: say so, and offer a restart
+		// (the screen would otherwise just freeze, and the app on the Home Screen has no reload button)
+		isProgramError(e) { // an error inside the program (WebAssembly), not in this page's helpers
+			try { if (typeof WebAssembly !== 'undefined' && e instanceof WebAssembly.RuntimeError) return true; } catch (x) {}
+			return /\b(RuntimeError|unreachable|memory access out of bounds|Aborted\()/.test(String((e && (e.message || e)) || ''));
+		},
+		crashed: false,
+		fatal(err) {
+			if (BT2.crashed) return;
+			BT2.crashed = true;
+			console.error('Bernttracker II stopped:', err);
+			try { BT2.detachEngine(); } catch (e) {}
+			try { BT2.syncFiles(); } catch (e) {} // what was saved gets stored (a file the program was in the middle of writing does not)
+			$('crashTitle').textContent = 'Noe gikk galt';
+			$('crashText').innerHTML = 'Bernttracker II fikk en feil og må startes på nytt.<br>Det du har lagret (Save) er trygt. ' +
+				'Endringer etter siste lagring er dessverre borte.';
+			$('crashDetail').textContent = String((err && (err.message || err)) || '').slice(0, 300);
+			$('crashWait').classList.add('hidden');
+			$('crash').classList.remove('hidden');
+			try { $('crashRestart').focus({ preventScroll: true }); } catch (e) {} // (Enter on a keyboard restarts)
+		},
+		stalledShown: false,
+		stallSnoozeUntil: 0,
+		showStalled(on) { // the program hasn't drawn a frame for a long time (and isn't waiting for a download)
+			if (BT2.crashed || on === BT2.stalledShown) return;
+			BT2.stalledShown = on;
+			if (on) {
+				$('crashTitle').textContent = 'Programmet svarer ikke';
+				$('crashText').innerHTML = 'Bernttracker II har ikke svart på over 10 sekunder.<br>Vent litt, eller start på nytt. ' +
+					'Det du har lagret (Save) er trygt.';
+				$('crashDetail').textContent = '';
+				$('crashWait').classList.remove('hidden');
+			}
+			$('crash').classList.toggle('hidden', !on);
 		},
 
 		toast(msg) {
@@ -788,25 +888,32 @@ registerProcessor('bt2-queue', BT2Queue);`;
 						// our own backup (everything under "BT2/"): put the files back where they were.
 						// Files that are already there are left alone (same name, other content: saved as "name (2)").
 						if (entries.length && entries.every((e) => e.name.startsWith('BT2/') || e.name.startsWith('Innstillinger/'))) {
-							let restored = 0;
+							let restored = 0, failed = 0;
 							for (const e of entries) {
 								if (e.dir || !e.name.startsWith('BT2/')) continue;
-								const parts = e.name.slice(4).split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
-								if (!parts.length) continue;
-								let dest = BT2.USER_ROOT + '/' + parts.join('/');
-								const content = await BT2.zipExtract(data, e);
-								if (FS.analyzePath(dest).exists) {
-									const cur = FS.readFile(dest);
-									if (cur.length === content.length && cur.every((v, i) => v === content[i])) continue; // the same file
-									if (cur.length === 0) { FS.writeFile(dest, content); restored++; continue; } // an empty demo placeholder
-									dest = BT2.uniquePath(dest);
+								try { // (one bad entry doesn't stop the rest)
+									const parts = e.name.slice(4).split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
+									if (!parts.length) continue;
+									let dest = BT2.USER_ROOT + '/' + parts.join('/');
+									const content = await BT2.zipExtract(data, e);
+									const there = FS.analyzePath(dest);
+									if (there.exists) {
+										const isFile = FS.isFile(FS.stat(dest).mode);
+										const cur = isFile ? FS.readFile(dest) : null;
+										if (cur && cur.length === content.length && cur.every((v, i) => v === content[i])) continue; // the same file
+										if (cur && cur.length === 0) { FS.writeFile(dest, content); restored++; continue; } // an empty demo placeholder
+										dest = BT2.uniquePath(dest); // (a different file, or a folder, with that name)
+									}
+									BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
+									FS.writeFile(dest, content);
+									restored++;
+								} catch (err) {
+									console.warn('restore', e.name, err);
+									failed++;
 								}
-								BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
-								FS.writeFile(dest, content);
-								restored++;
 							}
 							n += restored;
-							BT2.toast('Sikkerhetskopi: ' + restored + ' filer lagt tilbake i BT2');
+							BT2.toast('Sikkerhetskopi: ' + restored + ' filer lagt tilbake i BT2' + (failed ? ' (' + failed + ' kunne ikke leses)' : ''));
 							continue;
 						}
 						// a zip file: unpack it, with its folders, into a folder with the zip's name
@@ -886,35 +993,54 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			$('netProgress').style.width = (p === null || p === undefined) ? '0' : Math.round(p * 100) + '%';
 		},
 		netHide() { $('net').classList.add('hidden'); },
+		netBusy: 0, // downloads the program is waiting for
 		async download(url, label) {
+			BT2.netBusy++;
+			// no data for 20 seconds: give up (the program waits for the file, a stalled network would freeze it)
+			const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+			let idle = 0;
+			const alive = () => { clearTimeout(idle); if (ctrl) idle = setTimeout(() => ctrl.abort(), 20000); };
 			try {
 				BT2.netShow(label + ' …', 0);
-				const r = await fetch(url, { mode: 'cors', cache: 'no-cache' });
+				alive();
+				const r = await fetch(url, ctrl ? { mode: 'cors', cache: 'no-cache', signal: ctrl.signal } : { mode: 'cors', cache: 'no-cache' });
 				if (!r.ok) throw new Error('HTTP ' + r.status);
+				// (with a compressed answer the length is the packed size: only for the progress then)
 				const total = +(r.headers.get('Content-Length') || 0);
-				if (!r.body || !total) {
+				const exact = total > 0 && !r.headers.get('Content-Encoding');
+				if (!r.body) {
 					const b = new Uint8Array(await r.arrayBuffer());
-					BT2.netHide();
+					if (exact && b.length < total) throw new Error('ufullstendig');
 					return b;
 				}
 				const reader = r.body.getReader();
-				const out = new Uint8Array(total);
-				let got = 0, chunks = [];
+				let out = new Uint8Array(exact ? total : 65536), got = 0;
 				for (;;) {
 					const { done, value } = await reader.read();
 					if (done) break;
-					if (got + value.length <= total) out.set(value, got); else chunks.push(value);
+					alive();
+					if (got + value.length > out.length) { // more than announced: make room
+						const bigger = new Uint8Array(Math.max(out.length * 2, got + value.length));
+						bigger.set(out.subarray(0, got));
+						out = bigger;
+					}
+					out.set(value, got);
 					got += value.length;
-					BT2.netShow(label + ' … ' + Math.round(100 * got / total) + ' %', got / total);
+					if (total) BT2.netShow(label + ' … ' + Math.min(100, Math.round(100 * got / total)) + ' %', Math.min(1, got / total));
 				}
-				BT2.netHide();
-				if (got === total && !chunks.length) return out;
-				return new Uint8Array(await new Blob([out.subarray(0, Math.min(got, total)), ...chunks]).arrayBuffer());
+				if (exact && got < total) throw new Error('ufullstendig (' + got + ' av ' + total + ' byte)');
+				return got === out.length ? out : out.slice(0, got);
 			} catch (e) {
 				console.warn('download', url, e);
 				BT2.netHide();
-				BT2.toast(navigator.onLine === false ? 'Ingen nett – prøv igjen når du er på nett' : 'Kunne ikke hente filen (' + e.message + ')');
+				const why = navigator.onLine === false ? 'Ingen nett – prøv igjen når du er på nett'
+					: (e && e.name === 'AbortError') ? 'Nettet svarer ikke – prøv igjen' : 'Kunne ikke hente filen (' + e.message + ')';
+				BT2.toast(why);
 				return null;
+			} finally {
+				clearTimeout(idle);
+				BT2.netBusy--;
+				BT2.netHide();
 			}
 		},
 
@@ -927,9 +1053,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			if (!data) { BT2.toast('Lagre filen først (Save), så Exp.'); return; }
 			BT2.saveOrShare(new File([data], name, { type: 'application/octet-stream' }));
 		},
-		saveOrShare(file) { // iPad/iPhone: the share sheet ("Save to Files"), elsewhere a download
+		saveOrShare(file) { // iPad/iPhone: the share sheet ("Save to Files"), elsewhere a download. Resolves true when done.
 			if (navigator.canShare && navigator.canShare({ files: [file] })) {
-				navigator.share({ files: [file], title: file.name }).catch(() => {});
+				return navigator.share({ files: [file], title: file.name }).then(() => true, (e) => {
+					if (!e || e.name !== 'AbortError') console.warn('share', e);
+					return false; // cancelled, or not allowed
+				});
 			} else {
 				const a = document.createElement('a');
 				a.href = URL.createObjectURL(file);
@@ -937,6 +1066,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				document.body.appendChild(a);
 				a.click();
 				setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+				return Promise.resolve(true);
 			}
 		},
 
@@ -996,13 +1126,20 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				walk(BT2.USER_ROOT, '');
 				for (const cfg of ['/home/web_user/FT2.CFG', '/home/web_user/.config/FT2 clone/FT2.CFG'])
 					if (FS.analyzePath(cfg).exists) { files.push({ name: 'Innstillinger/FT2.CFG', data: FS.readFile(cfg) }); break; }
-			} catch (e) { console.error('backup', e); }
+			} catch (e) {
+				console.error('backup', e);
+				BT2.toast('Kunne ikke lage sikkerhetskopien (' + (e.message || e) + ')'); // (never a half backup that looks complete)
+				return;
+			}
 			const d = new Date(), pad = (x) => String(x).padStart(2, '0');
 			const name = 'Bernttracker-sikkerhetskopi-' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + '.zip';
-			BT2.saveOrShare(new File([BT2.zipCreate(files)], name, { type: 'application/zip' }));
-			BT2.toast(files.length + ' filer i sikkerhetskopien');
-			try { localStorage.setItem('bt2-last-backup', String(Date.now())); } catch (e) {}
-			$('backupHint').classList.add('hidden');
+			const n = files.length;
+			BT2.saveOrShare(new File([BT2.zipCreate(files)], name, { type: 'application/zip' })).then((ok) => {
+				if (!ok) { BT2.toast('Sikkerhetskopien ble ikke lagret'); return; }
+				BT2.toast(n + ' filer i sikkerhetskopien');
+				if (Module.bt2StorageOK) { try { localStorage.setItem('bt2-last-backup', String(Date.now())); } catch (e) {} }
+				$('backupHint').classList.add('hidden');
+			});
 		},
 		// on the start screen: a reminder when the user has own files and no backup in the last 14 days
 		backupReminder() {
@@ -1022,7 +1159,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			let last = 0;
 			try { last = +localStorage.getItem('bt2-last-backup') || 0; } catch (e) {}
 			const days = last ? Math.floor((Date.now() - last) / 864e5) : -1;
-			if (days >= 0 && days < 14) return;
+			if (days >= 0 && days < (BT2.safariTab ? 5 : 14)) return; // (Safari tabs: sooner, see safariWarning)
 			$('backupHint').textContent = (days < 0 ? 'Du har ' + own + (own === 1 ? ' egen fil' : ' egne filer') + ' og ingen sikkerhetskopi ennå.'
 				: 'Det er ' + days + ' dager siden forrige sikkerhetskopi.') + ' Trykk «Sikkerhetskopi (zip)» og lagre den i Filer eller iCloud.';
 			$('backupHint').classList.remove('hidden');
@@ -1047,7 +1184,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const now = performance.now();
 			if (off > 0.01 && now - BT2.lastResizeAsk > 250) {
 				BT2.lastResizeAsk = now;
-				window.dispatchEvent(new Event('resize'));
+				// (after this frame: resizing clears the drawing surface, in the middle of a frame that gave a black frame)
+				setTimeout(() => window.dispatchEvent(new Event('resize')), 0);
 			}
 		},
 
@@ -1151,8 +1289,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		MODLAND_SEARCH: '/Modland/~Search results',
 		MODLAND_URL: 'https://modland.com/pub/modules/Fasttracker%202/',
 		modland: { tree: null, populated: new Set(), searchMap: new Map() },
-		async modlandLoad() {
-			if (BT2.modland.tree) return true;
+		modlandLoad() {
+			if (BT2.modland.tree) return Promise.resolve(true);
+			if (!BT2.modland.loading) BT2.modland.loading = BT2.modlandLoadNow().finally(() => { BT2.modland.loading = null; });
+			return BT2.modland.loading;
+		},
+		async modlandLoadNow() {
 			let text = null, saved = 0;
 			try {
 				const c = await caches.open('bt2-modland');
@@ -1337,13 +1479,25 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches ||
 					matchMedia('(display-mode: fullscreen)').matches;
 				if (BT2.isApple() && navigator.maxTouchPoints > 0 && !standalone) $('homeHint').classList.remove('hidden');
+				BT2.safariTab = BT2.isApple() && !standalone;
+				if (BT2.safariTab && navigator.storage && navigator.storage.persisted) {
+					navigator.storage.persisted().then((kept) => {
+						if (kept) return;
+						const w = $('safariWarning');
+						w.textContent = 'Viktig: i en vanlig Safari-fane kan Safari slette filene dine hvis du ikke har åpnet Bernttracker på ' +
+							'7 dager. Legg appen til på Hjem-skjermen (iPad/iPhone) eller i Dock (Mac), og ta sikkerhetskopi jevnlig.';
+						w.classList.remove('hidden');
+					}).catch(() => {});
+				}
 			} catch (e) {}
 
 			if (!BT2.appSupported()) { BT2.appSetStatus('Denne nettleseren kan ikke lagre appen på enheten.'); return; }
-			let cur = null, remote = null;
-			try { cur = await BT2.appCurrent(); } catch (e) {}
+			let cur = null, remote = null, curUnknown = false;
+			try { cur = await BT2.appCurrent(); } catch (e) { curUnknown = true; }
 			try { remote = await BT2.appRemote(); } catch (e) {}
 
+			// (couldn't read what is installed: don't treat it as a first install, that would replace the app's cache)
+			if (curUnknown) { BT2.appSetStatus('Kunne ikke sjekke den lagrede appen akkurat nå. Prøver igjen neste gang.'); return; }
 			if (!cur) {
 				if (!remote) { BT2.appSetStatus('Appen er ikke lagret på enheten ennå (ingen nett nå).'); return; }
 				BT2.appSetStatus('Lagrer appen på denne enheten …');
@@ -1395,6 +1549,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			setTimeout(BT2.installDemos, 1500);
 			$('loading').classList.add('hidden');
 			$('start').classList.remove('hidden');
+			try { $('startButton').focus({ preventScroll: true }); } catch (e) {} // (Enter/Space on a keyboard starts too)
 			BT2.starfield.kick();
 			try { BT2.backupReminder(); } catch (e) { console.warn('backup reminder', e); }
 			BT2.showAudioMode();
@@ -1402,11 +1557,22 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	};
 
 	// Imp./Exp. in Disk Op.: must run directly inside the tap (iPad/Safari rule for file pickers and sharing)
+	const diskOpButtonAt = (x, y) => BT2.hitButton(x, y, 134, 33, 31, 22) ? 'imp' : BT2.hitButton(x, y, 134, 57, 31, 22) ? 'exp'
+		: BT2.hitButton(x, y, 134, 110, 31, 22) ? 'find' : null;
+	let diskOpPress = null; // the button a press started on (a press that starts elsewhere, or a second finger, does nothing)
+	document.addEventListener('pointerdown', (e) => {
+		diskOpPress = (e.isPrimary && e.button === 0 && BT2.started && BT2.diskOpShown && e.target === $('canvas'))
+			? { id: e.pointerId, b: diskOpButtonAt(e.clientX, e.clientY) } : null;
+	}, { capture: true });
+	document.addEventListener('pointercancel', () => { diskOpPress = null; }, { capture: true });
 	document.addEventListener('pointerup', (e) => {
-		if (!BT2.started || !BT2.diskOpShown || e.target !== $('canvas')) return;
-		if (BT2.hitButton(e.clientX, e.clientY, 134, 33, 31, 22)) BT2.doImport();
-		else if (BT2.hitButton(e.clientX, e.clientY, 134, 57, 31, 22)) BT2.doExport();
-		else if (BT2.hitButton(e.clientX, e.clientY, 134, 110, 31, 22)) BT2.search.open(); // Find
+		const p = diskOpPress;
+		if (!p || p.id !== e.pointerId) return;
+		diskOpPress = null;
+		if (!p.b || !BT2.started || !BT2.diskOpShown || e.target !== $('canvas') || diskOpButtonAt(e.clientX, e.clientY) !== p.b) return;
+		if (p.b === 'imp') BT2.doImport();
+		else if (p.b === 'exp') BT2.doExport();
+		else BT2.search.open(); // Find
 	}, { capture: true });
 
 	// ---------- the FT2 about-screen starfield behind the logo (only while the loading/start screen is shown)
@@ -1721,6 +1887,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		};
 		const onKey = (e) => {
 			if (e.type !== 'keydown') return;
+			// (Alt+arrow = back/forward and Alt+letter = menus in browsers on Windows: not while searching)
+			if (e.altKey && !e.ctrlKey && !BT2.isApple()) e.preventDefault();
 			if (e.key === 'Escape') { e.preventDefault(); close(); }
 			else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
 			else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
@@ -1755,8 +1923,9 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// (Cmd only counts on Apple keyboards: the Windows key does nothing in FT2)
 	const modFlags = (e) => (e.ctrlKey ? 1 : 0) | (e.altKey ? 2 : 0) | (e.shiftKey ? 4 : 0) | ((e.metaKey && BT2.isApple()) ? 8 : 0) |
 		((altGrHeld || (e.getModifierState && e.getModifierState('AltGraph'))) ? 16 : 0);
-	const overlayOpen = () => !$('start').classList.contains('hidden') || !$('loading').classList.contains('hidden');
-	const ready = () => typeof Module._webSyncModifiers === 'function';
+	const overlayOpen = () => !$('start').classList.contains('hidden') || !$('loading').classList.contains('hidden') ||
+		!$('crash').classList.contains('hidden');
+	const ready = () => Module.calledRun === true && typeof Module._webSyncModifiers === 'function'; // (the program is running)
 	let capsDownState = null;
 	BT2.keyLog = [];
 	const logKey = (e) => {
@@ -1800,9 +1969,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			return;
 		}
 		if (!$('diag').classList.contains('hidden')) {
-			// sound test is open: show the key, don't let the program react to it
+			// sound test is open: show the key, don't let the program react to it (Tab moves between the buttons, Esc closes)
 			logKey(e);
-			if (e.code !== 'Tab') { e.preventDefault(); e.stopImmediatePropagation(); }
+			if (e.type === 'keydown' && e.key === 'Escape') { $('diag').classList.add('hidden'); BT2.focusCanvas(); }
+			if (e.code !== 'Tab') e.preventDefault();
+			e.stopImmediatePropagation();
 			return;
 		}
 		if (!ready()) return;
@@ -1841,12 +2012,17 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				if (e.type === 'keydown') injectedKeys[id] = sc; else delete injectedKeys[id];
 				Module._webKeyEvent(sc, e.type === 'keydown' ? 1 : 0);
 				e.stopImmediatePropagation();
+				if (BT2.wake) setTimeout(() => BT2.wake && BT2.wake(), 0); // (the wake-up listener doesn't see this key now)
 				if (Module._webIsEditingText() === 0) e.preventDefault(); // (while typing text: keep the letter for the text box)
 				return;
 			}
 		}
 
-		if (overlayOpen() || e.metaKey) return; // overlay buttons, and Cmd/Win shortcuts of the system/browser
+		if (overlayOpen()) { // the start/loading screen has the keyboard (Tab, Enter and Space for its buttons)
+			e.stopImmediatePropagation(); // (FT2 behind it gets nothing: Space would turn on edit mode, letters play notes)
+			return;
+		}
+		if (e.metaKey) return; // Cmd/Win shortcuts of the system/browser
 		const editing = Module._webIsEditingText() !== 0;
 		if (e.type === 'keyup') {
 			if (e.key === 'Alt' || e.key === 'AltGraph' || e.key === 'ContextMenu' || e.key === 'F10') e.preventDefault();
@@ -2042,6 +2218,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	$('storageBanner').addEventListener('click', () => {
 		const kind = BT2.bannerKind;
 		if (kind === 'sync') { BT2.toast('Prøver å lagre …'); BT2.syncFiles(); return; }
+		if (kind === 'full') { if (Module.bt2FS) BT2.backup(); return; } // (made from memory: also what isn't stored yet)
 		$('storageBanner').classList.add('hidden');
 		BT2.bannerTimer = setTimeout(() => { if (BT2.bannerKind === kind) BT2.storageBanner(kind); }, 120000);
 	});
@@ -2082,7 +2259,13 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// save files when the app goes to the background; wake the sound up again when it comes back
 	BT2.visibleSince = performance.now();
 	document.addEventListener('visibilitychange', () => {
-		if (document.hidden) { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); BT2.saveDropouts(); return; }
+		if (document.hidden) {
+			try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {}
+			BT2.syncFiles();
+			BT2.saveDropouts();
+			if (BT2.wake) BT2.wake(); // (a frame wait started while visible would wait for a screen refresh that never comes)
+			return;
+		}
 		BT2.visibleSince = performance.now();
 		if (BT2.started && BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {});
 		BT2.starfield.kick();
@@ -2102,8 +2285,31 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			if (m) $('progress').style.width = (100 * m[1] / m[2]) + '%';
 		},
 		monitorRunDependencies: () => {},
-		onAbort: (what) => { $('loadStatus').textContent = 'Feil: ' + what; $('loading').classList.remove('hidden'); BT2.starfield.kick(); },
+		onAbort: (what) => { if (!fallBackToSimple(what)) BT2.fatal('Aborted(' + what + ')'); },
 	};
+
+	// the low-latency build couldn't start in this browser (e.g. not enough memory for it): use the other one
+	let usingWorkletBuild = false;
+	const fallBackToSimple = (why) => {
+		if (forceSimple || !usingWorkletBuild || Module.calledRun) return false;
+		console.warn('The low-latency build could not start, using the compatible one:', why);
+		location.replace(location.pathname + '?simple' + location.hash);
+		return true;
+	};
+	window.addEventListener('error', (ev) => {
+		if (/\/bt2\.js(\?|$)/.test(ev.filename || '') && fallBackToSimple(ev.message)) return;
+		if (BT2.isProgramError(ev.error || ev.message)) BT2.fatal(ev.error || ev.message);
+	});
+	window.addEventListener('unhandledrejection', (ev) => { if (BT2.isProgramError(ev.reason)) BT2.fatal(ev.reason); });
+	$('crashRestart').addEventListener('click', () => location.reload());
+	$('crashWait').addEventListener('click', () => { BT2.stallSnoozeUntil = performance.now() + 30000; BT2.showStalled(false); });
+	// no frame for 10 seconds while the program isn't waiting for a frame or a download: it may be stuck
+	setInterval(() => {
+		if (!BT2.started || BT2.crashed || document.hidden) return;
+		const now = performance.now();
+		BT2.showStalled(BT2.lastFrame > 0 && !BT2.wake && !BT2.netBusy && now - BT2.lastFrame > 10000 &&
+			now - (BT2.visibleSince || 0) > 10000 && now > BT2.stallSnoozeUntil);
+	}, 2000);
 
 	const load = (src, label) => {
 		$('loadStatus').textContent = 'Laster ' + label + '…';
@@ -2126,6 +2332,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		$('loadStatus').classList.remove('hidden');
 
 		if (!forceSimple && canUseWorklet()) {
+			usingWorkletBuild = true;
 			load('bt2.js', 'programmet');
 		} else {
 			// the helper script may reload the page once to turn on isolation - give it a moment
