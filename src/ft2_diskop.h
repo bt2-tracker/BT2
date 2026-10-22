@@ -39,11 +39,16 @@ void diskOpSetFilename(uint8_t type, UNICHAR *pathU);
 void sanitizeFilename(const char *src);
 bool diskOpGoParent(void);
 void pbDiskOpRoot(void);
-#ifdef __EMSCRIPTEN__
+#if defined __EMSCRIPTEN__ || defined _WIN32 // BerntTracker: the web version's buttons (also in the Windows program)
 void pbDiskOpImport(void);
 void pbDiskOpExport(void);
 void pbDiskOpModland(void);
 void pbDiskOpFind(void);
+#endif
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include <wchar.h>
+#include <stddef.h>
+bool diskOpGetFilePathW(wchar_t *out, size_t outLen); // current folder + the name in the "File:" box
 #endif
 int32_t getExtOffset(char *s, int32_t stringLen); // get byte offset of file extension (last '.')
 bool testDiskOpMouseDown(bool mouseHeldDown);
@@ -60,16 +65,6 @@ void pbDiskOpListUp(void);
 void pbDiskOpListDown(void);
 void pbDiskOpParent(void);
 void cbDiskOpAllFiles(void);
-#ifdef _WIN32
-void pbDiskOpDrive1(void);
-void pbDiskOpDrive2(void);
-void pbDiskOpDrive3(void);
-void pbDiskOpDrive4(void);
-void pbDiskOpDrive5(void);
-void pbDiskOpDrive6(void);
-void pbDiskOpDrive7(void);
-void pbDiskOpDrive8(void);
-#endif
 void pbDiskOpSave(void);
 void pbDiskOpDelete(void);
 void pbDiskOpRename(void);

@@ -20,6 +20,7 @@
 #endif
 #include "ft2_header.h"
 #include "ft2_web.h"
+#include "bt2_diskop.h"
 #include "ft2_config.h"
 #include "ft2_structs.h"
 #include "ft2_video.h"
@@ -847,7 +848,7 @@ static bool makeDirs(const char *path) // like "mkdir -p"
 	return stat(tmp, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
-bool webDiskOpReadOnlyHere(void)
+bool bt2DiskOpReadOnlyHere(void)
 {
 	char cwd[PATH_MAX];
 	return getcwd(cwd, sizeof (cwd)) != NULL && pathInside(cwd, WEB_MODLAND_ROOT);
@@ -857,7 +858,7 @@ bool webDiskOpReadOnlyHere(void)
 ** so a file saved there would be gone after a restart. Save it in the user's own copy of that
 ** folder instead (BT2/Modland/..., where songs opened from Modland are kept too), and say so.
 */
-bool webDiskOpPrepareSaveDir(void)
+bool bt2DiskOpPrepareSaveDir(bool showFolder)
 {
 	char cwd[PATH_MAX], dest[PATH_MAX];
 	if (getcwd(cwd, sizeof (cwd)) == NULL)
@@ -880,7 +881,8 @@ bool webDiskOpPrepareSaveDir(void)
 		return false;
 	}
 
-	editor.diskOpReadDir = true; // show the folder the file goes to
+	if (showFolder)
+		editor.diskOpReadDir = true; // show the folder the file goes to
 
 	char msg[PATH_MAX + 80];
 	snprintf(msg, sizeof (msg), "%sLagrer i %s", fromModland ? "Modland er bare til lesing. " : "",
@@ -889,7 +891,7 @@ bool webDiskOpPrepareSaveDir(void)
 	return true;
 }
 
-void webDiskOpConfineDir(void)
+void bt2DiskOpConfineDir(void)
 {
 	char cwd[PATH_MAX];
 	if (getcwd(cwd, sizeof (cwd)) != NULL && (pathInside(cwd, WEB_USER_ROOT) || pathInside(cwd, WEB_MODLAND_ROOT)))
@@ -905,9 +907,37 @@ EM_ASYNC_JS(int32_t, bt2_prepareFile, (const char *path), {
 	catch (e) { console.error('prepareFile', e); return 0; }
 });
 
-bool webPrepareFile(const char *path)
+bool bt2PrepareFile(const char *path)
 {
 	return bt2_prepareFile(path) != 0;
+}
+
+bool bt2PrepareDroppedFile(const char *path)
+{
+	return bt2_prepareFile(path) != 0;
+}
+
+void bt2DiskOpBeforeList(const char *dir) // (the page fills Modland's folders itself, when they are read)
+{
+	(void)dir;
+}
+
+const char *bt2ModlandRootU(void)
+{
+	return WEB_MODLAND_ROOT;
+}
+
+const char *bt2HomeRootU(void)
+{
+	return WEB_USER_ROOT;
+}
+
+// "Find": the page's search window. (The page also opens it right in the tap/click, so the iPad keyboard can come up.)
+EM_JS(void, bt2_searchOpen, (void), { if (globalThis.BT2 && globalThis.BT2.search) globalThis.BT2.search.open(); });
+
+void bt2SearchOpen(void)
+{
+	bt2_searchOpen();
 }
 
 EM_ASYNC_JS(int32_t, bt2_modlandPrepare, (void), {
@@ -920,7 +950,7 @@ EM_ASYNC_JS(int32_t, bt2_modlandSearch, (const char *query), {
 	catch (e) { console.error('modland search', e); return -1; }
 });
 
-bool webModlandPrepare(void)
+bool bt2ModlandOpen(void)
 {
 	return bt2_modlandPrepare() != 0;
 }

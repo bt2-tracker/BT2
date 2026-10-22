@@ -18,6 +18,7 @@
 #include "ft2_inst_ed.h"
 #include "ft2_audio.h"
 #include "ft2_wav_renderer.h"
+#include "bt2_diskop.h" // BerntTracker: Modland is read-only
 #include "ft2_structs.h"
 #include "ft2_unicode.h"
 
@@ -493,7 +494,7 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 			break;
 		}
 
-		sprintf(newFilename, "%s (ch %02d of %02d).wav", tmpFilename, j+1, song.numChannels);
+		snprintf(newFilename, sizeof (newFilename), "%s (ch %02d of %02d).wav", tmpFilename, j+1, song.numChannels); // BerntTracker: snprintf
 		FILE *f = fopenCp850(newFilename, "wb");
 		if (f == NULL)
 		{
@@ -688,8 +689,8 @@ static int32_t renderWavIndividualTracksThread(void *ptr)
 
 static void wavRender(bool checkOverwrite)
 {
-#ifdef __EMSCRIPTEN__
-	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
+#ifdef BT2_DISKOP
+	if (!bt2DiskOpPrepareSaveDir(true)) // BerntTracker: never into Modland (read-only)
 		return;
 #endif
 
@@ -722,6 +723,30 @@ static void wavRender(bool checkOverwrite)
 	{
 		diskOpChangeFilenameExt("");
 		tmpFilename = getDiskOpFilename();
+
+		// BerntTracker: FT2 wrote over these files without asking
+		if (checkOverwrite)
+		{
+			int32_t existing = 0;
+			for (int32_t j = 0; j < song.numChannels; j++)
+			{
+				char name[PATH_MAX + 64];
+				snprintf(name, sizeof (name), "%s (ch %02d of %02d).wav", tmpFilename, j+1, song.numChannels);
+				if (fileExistsAnsi(name))
+					existing++;
+			}
+
+			if (existing > 0)
+			{
+				char buf[160];
+				snprintf(buf, sizeof (buf), "Overwrite %d existing WAV file%s for the tracks?", (int)existing, (existing == 1) ? "" : "s");
+				if (okBox(2, "System request", buf, NULL) != 1)
+				{
+					diskOpChangeFilenameExt(".wav");
+					return;
+				}
+			}
+		}
 	}
 
 	mouseAnimOn();

@@ -266,8 +266,8 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.21';
-	const BT2_DATE = '19.10.2026';
+	const BT2_VERSION = '0.22';
+	const BT2_DATE = '22.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
 
@@ -962,11 +962,27 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				if (!FS.analyzePath(p).exists) return p;
 			}
 		},
+		// "song.xm" is taken: the first free "song (2).xm" ..., or null if one of those already has these contents
+		sameCopyOrFreePath(path, content) {
+			const FS = Module.bt2FS;
+			const slash = path.lastIndexOf('/'), dot = path.lastIndexOf('.');
+			const stem = dot > slash ? path.slice(0, dot) : path, ext = dot > slash ? path.slice(dot) : '';
+			for (let i = 2; ; i++) {
+				const p = stem + ' (' + i + ')' + ext;
+				if (!FS.analyzePath(p).exists) return p;
+				try {
+					if (FS.isFile(FS.stat(p).mode)) {
+						const cur = FS.readFile(p);
+						if (cur.length === content.length && cur.every((v, k) => v === content[k])) return null;
+					}
+				} catch (e) {}
+			}
+		},
 		cleanName(n) { return n.replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '_').slice(0, 200); },
 		async importFiles(files) {
 			const FS = Module.bt2FS;
 			const dir = BT2.importDir();
-			let n = 0, zips = 0;
+			let n = 0, zips = 0, backups = 0, errors = 0;
 			BT2.lastImportPaths = [];
 			for (const f of files) {
 				try {
@@ -990,7 +1006,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 										const cur = isFile ? FS.readFile(dest) : null;
 										if (cur && cur.length === content.length && cur.every((v, i) => v === content[i])) continue; // the same file
 										if (cur && cur.length === 0) { FS.writeFile(dest, content); restored++; continue; } // an empty demo placeholder
-										dest = BT2.uniquePath(dest); // (a different file, or a folder, with that name)
+										dest = BT2.sameCopyOrFreePath(dest, content); // (a different file, or a folder, with that name)
+										if (!dest) continue; // (this backup was put back before: "name (2)" is the same)
 									}
 									BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
 									FS.writeFile(dest, content);
@@ -1001,7 +1018,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 								}
 							}
 							n += restored;
-							BT2.toast('Sikkerhetskopi: ' + restored + ' filer lagt tilbake i BT2' + (failed ? ' (' + failed + ' kunne ikke leses)' : ''));
+							backups++;
+							BT2.toast('Sikkerhetskopi: ' + restored + (restored === 1 ? ' fil' : ' filer') + ' lagt tilbake i BT2' + (failed ? ' (' + failed + ' kunne ikke leses)' : ''));
 							continue;
 						}
 						// a zip file: unpack it, with its folders, into a folder with the zip's name
@@ -1022,10 +1040,12 @@ registerProcessor('bt2-queue', BT2Queue);`;
 						BT2.lastImportPaths.push(dest);
 						n++;
 					}
-				} catch (e) { console.error('import', f.name, e); BT2.toast('Kunne ikke importere ' + f.name); }
+				} catch (e) { console.error('import', f.name, e); BT2.toast('Kunne ikke importere ' + f.name); errors++; }
 			}
 			Module._webImportDone();
 			BT2.syncFiles();
+			// (not when it would only hide the message above: backups, or nothing came in because of an error)
+			if (backups === files.length || (n === 0 && errors > 0)) return n;
 			BT2.toast((n === 1 ? 'Importerte 1 fil' : 'Importerte ' + n + ' filer') + (zips ? ' (pakket ut zip)' : '') +
 				(dir === BT2.USER_ROOT && Module.bt2FS.cwd() !== dir ? ' til BT2-mappa' : ''));
 			return n;
@@ -1355,9 +1375,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) BT2.fsReaddirHook(abs.slice(0, abs.lastIndexOf('/')));
 			let st = null;
 			try { st = FS.stat(abs); } catch (e) { return true; } // let the program report it
+			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) return BT2.modlandFetch(abs, st.size);
 			if (st.size > 0) return true;
-
-			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) return BT2.modlandFetch(abs);
 
 			if (abs.startsWith(BT2.DEMO_ROOT + '/')) {
 				const rel = abs.slice(BT2.DEMO_ROOT.length + 1);
@@ -1416,9 +1435,16 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const buf = quiet ? await (await fetch('https://modland.com/allmods.zip', { cache: 'no-cache' })).arrayBuffer().then((b) => new Uint8Array(b))
 				: await BT2.download('https://modland.com/allmods.zip', 'Henter Modland-listen (bare første gang)');
 			if (!buf) return null;
-			const entries = BT2.zipEntries(buf);
-			const e = entries.find((x) => /allmods\.txt$/i.test(x.name)) || entries[0];
-			const all = new TextDecoder('utf-8').decode(await BT2.zipExtract(buf, e));
+			let all;
+			try {
+				const entries = BT2.zipEntries(buf);
+				const e = entries.find((x) => /allmods\.txt$/i.test(x.name)) || entries[0];
+				all = new TextDecoder('utf-8').decode(await BT2.zipExtract(buf, e));
+			} catch (err) {
+				console.warn('Modland list', err);
+				if (!quiet) BT2.toast('Kunne ikke lese Modland-listen');
+				return null;
+			}
 			const out = [];
 			for (const line of all.split('\n')) {
 				const i = line.indexOf('\tFasttracker 2/');
@@ -1483,15 +1509,25 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			}
 			return hits.length;
 		},
-		async modlandFetch(abs) {
+		async modlandFetch(abs, size) {
 			const FS = Module.bt2FS;
 			const path = abs.startsWith(BT2.MODLAND_SEARCH + '/') ? BT2.modland.searchMap.get(abs.slice(BT2.MODLAND_SEARCH.length + 1))
 				: abs.slice(BT2.MODLAND_ROOT.length + 1);
 			if (!path) return true;
 			const own = BT2.USER_ROOT + '/Modland/' + path; // the user's own copy (kept, works without internet)
+			// the user's own copy is what is opened (also after it was changed and saved)
 			try {
 				if (FS.stat(own).size > 0) { FS.writeFile(abs, FS.readFile(own)); return true; }
 			} catch (e) {}
+			if (size > 0) { // it came before (the user's copy has been deleted or moved since): a new copy of it
+				try {
+					BT2.mkdirs(own.slice(0, own.lastIndexOf('/')));
+					FS.writeFile(own, FS.readFile(abs));
+					BT2.syncFiles();
+					BT2.toast('Lagret i BT2/Modland/' + path);
+				} catch (e) { BT2.toast('Kunne ikke lagre i BT2/Modland/' + path); }
+				return true;
+			}
 			const data = await BT2.download(BT2.MODLAND_URL + path.split('/').map(encodeURIComponent).join('/'),
 				'Henter «' + path.split('/').pop() + '» fra Modland');
 			if (!data) return false;
@@ -1874,7 +1910,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const src = document.createElement('span');
 			src.className = 'ft-src';
 			src.textContent = (it.src === 'own' ? 'Mine' : 'Modland') + '\n' +
-				(it.kind === 'folder' ? (it.count ? it.count + ' sanger' : '') : fmtSize(it.size));
+				(it.kind === 'folder' ? (it.count ? it.count + (it.count === 1 ? ' sang' : ' sanger') : '') : fmtSize(it.size));
 			src.style.whiteSpace = 'pre';
 			r.append(kind, main, src);
 			if (it.kind !== 'folder') {

@@ -30,6 +30,7 @@
 #include "ft2_random.h"
 #include "ft2_replayer.h"
 #include "ft2_smpfx.h"
+#include "bt2_diskop.h" // BerntTracker: Modland is read-only
 
 static const char sharpNote1Char[12] = { 'C', 'C', 'D', 'D', 'E', 'F', 'F', 'G', 'G', 'A', 'A', 'B' };
 static const char sharpNote2Char[12] = { '-', '#', '-', '#', '-', '-', '#', '-', '#', '-', '#', '-' };
@@ -1729,11 +1730,6 @@ void saveRange(void)
 		return;
 	}
 
-#ifdef __EMSCRIPTEN__
-	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
-		return;
-#endif
-
 	switch (editor.sampleSaveMode)
 	{
 		         case SMP_SAVE_MODE_RAW: changeFilenameExt(smpEd_SysReqText, ".raw", sizeof (smpEd_SysReqText) - 1); break;
@@ -1748,15 +1744,36 @@ void saveRange(void)
 		return;
 	}
 
+	/* BerntTracker: a range is saved in Disk Op.'s folder for samples (FT2 went there in saveSampleThread()),
+	** so that is where the name is checked now. FT2 checked the current folder, and could write over a sample
+	** in the sample folder without asking. Never into Modland: then BT2/Modland/..., and it says so.
+	*/
+	const UNICHAR *smpPathU = getDiskOpSmpPath();
+	if (smpPathU != NULL && smpPathU[0] != 0)
+		UNICHAR_CHDIR(smpPathU);
+
+#ifdef BT2_DISKOP
+	if (!bt2DiskOpPrepareSaveDir(false))
+	{
+		UNICHAR_CHDIR(getDiskOpCurPath());
+		free(filenameU);
+		return;
+	}
+#endif
+
 	if (fileExistsAnsi(smpEd_SysReqText))
 	{
 		char buf[256];
 		createFileOverwriteText(smpEd_SysReqText, buf);
 		if (okBox(2, "System request", buf, NULL) != 1)
+		{
+			UNICHAR_CHDIR(getDiskOpCurPath()); // (back to Disk Op.'s folder)
+			free(filenameU);
 			return;
+		}
 	}
 
-	saveSample(filenameU, SAVE_RANGE);
+	saveSample(filenameU, SAVE_RANGE); // (saved in this folder, then back to Disk Op.'s folder)
 	free(filenameU);
 }
 

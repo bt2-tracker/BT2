@@ -385,28 +385,15 @@ pushButton_t pushButtons[NUM_PUSHBUTTONS] =
 	{  70,  70, 58, 16, 0, 0, "Refresh",            NULL,    NULL,            pbDiskOpRefresh },
 	{  70,  87, 58, 16, 0, 0, "Set path",           NULL,    NULL,            pbDiskOpSetPath },
 	{  70, 121, 58, 19, 0, 0, "Exit",               NULL,    NULL,            pbDiskOpExit },
-#ifdef _WIN32 // partition letters
-	{ 134,   2, 31, 13, 0, 0, DISKOP_PARENT_STRING, NULL,    NULL,            pbDiskOpParent },
-	{ 134,  16, 31, 12, 0, 0, "\\",                 NULL,    NULL,            pbDiskOpRoot },
-	{ 134,  29, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive1 },
-	{ 134,  43, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive2 },
-	{ 134,  57, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive3 },
-	{ 134,  71, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive4 },
-	{ 134,  85, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive5 },
-	{ 134,  99, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive6 },
-	{ 134, 113, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive7 },
-	{ 134, 127, 31, 13, 0, 0, NULL,                 NULL,    NULL,            pbDiskOpDrive8 },
-#else
 	{ 134,   2, 31, 13, 0, 0, "../",               NULL,    NULL,             pbDiskOpParent },
-#ifdef __EMSCRIPTEN__
+#if defined __EMSCRIPTEN__ || defined _WIN32 // BerntTracker: the same buttons in the web version and the Windows program
 	{ 134,  16, 31, 12, 0, 0, "BT2",               NULL,    NULL,             pbDiskOpRoot },
-	{ 134,  33, 31, 22, 0, 0, "Imp.",              NULL,    NULL,             pbDiskOpImport }, // BerntTracker (web)
+	{ 134,  33, 31, 22, 0, 0, "Imp.",              NULL,    NULL,             pbDiskOpImport },
 	{ 134,  57, 31, 22, 0, 0, "Exp.",              NULL,    NULL,             pbDiskOpExport },
 	{ 134,  81, 31, 27, 0, 0, "Mod-",              "land",  NULL,             pbDiskOpModland }, // (two lines need 27, like "Swap Bank")
 	{ 134, 110, 31, 22, 0, 0, "Find",              NULL,    NULL,             pbDiskOpFind },
 #else
 	{ 134,  16, 31, 12, 0, 0, "/",                 NULL,    NULL,             pbDiskOpRoot },
-#endif
 #endif
 	{ 335,   2, 18, 13, 1, 3, ARROW_UP_STRING,     NULL,    pbDiskOpListUp,   NULL },
 	{ 335, 158, 18, 13, 1, 3, ARROW_DOWN_STRING,   NULL,    pbDiskOpListDown, NULL },

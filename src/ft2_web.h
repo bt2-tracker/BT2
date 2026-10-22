@@ -48,16 +48,12 @@ void webToggleFullscreen(void); // Alt+Enter: the browser's fullscreen
 // files
 #define WEB_USER_ROOT "/home/web_user/BT2" // the user's own folders (stored in the browser)
 void webSyncFiles(void);
-bool webPrepareFile(const char *path); // download a library/Modland song before it is opened (false = failed)
-bool webDiskOpPrepareSaveDir(void); // before saving: never into the Modland library (kept in memory only)
-bool webDiskOpReadOnlyHere(void);   // true in the Modland library (no new folders, renaming or deleting there)
-void webDiskOpConfineDir(void);     // Disk Op. stays inside the user's folders and the Modland library
+// (Disk Op.'s Modland and folder rules: bt2_diskop.h, the same as in the Windows program)
 void webHandlePageRequests(void);   // in the main loop: requests from the page (e.g. "show this folder" from the search window)
 
 // Modland (online library)
 #define WEB_MODLAND_ROOT "/Modland"
 #define WEB_MODLAND_SEARCH_DIR "/Modland/~Search results"
-bool webModlandPrepare(void);              // loads the list (first time: from modland.com) and makes /Modland
 int32_t webModlandSearch(const char *query); // number of hits (in WEB_MODLAND_SEARCH_DIR), -1 = failed
 
 #endif

@@ -45,6 +45,16 @@
     <ClCompile Include="..\..\src\bt2_winstart.c" />
     <ClCompile Include="..\..\src\bt2_winupdate.c" />
     <ClCompile Include="..\..\src\bt2_winhome.c" />
+    <ClCompile Include="..\..\src\bt2_unzip.c" />
+    <ClCompile Include="..\..\src\bt2_fs.c" />
+    <ClCompile Include="..\..\src\bt2_net.c" />
+    <ClCompile Include="..\..\src\bt2_winnet.c" />
+    <ClCompile Include="..\..\src\bt2_modland.c" />
+    <ClCompile Include="..\..\src\bt2_import.c" />
+    <ClCompile Include="..\..\src\bt2_search.c" />
+    <ClCompile Include="..\..\src\bt2_winoverlay.c" />
+    <ClCompile Include="..\..\src\bt2_windiskop.c" />
+    <ClCompile Include="..\..\src\bt2_winsearch.c" />
     <ClCompile Include="..\..\src\rtmidi\RtMidi.cpp">
       <Filter>rtmidi</Filter>
     </ClCompile>
@@ -290,6 +300,36 @@
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\bt2_version.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_unzip.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_fs.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_net.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_modland.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_import.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_search.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_diskop.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winoverlay.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_windiskop.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_winsearch.h">
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\mixer\ft2_mix.h">

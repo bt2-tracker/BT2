@@ -42,8 +42,10 @@
 #include "ft2_video.h"
 #include "ft2_inst_ed.h"
 #include "ft2_structs.h"
+#include "bt2_diskop.h" // BerntTracker: Disk Op. like on the iPad (web version and Windows program)
 #if defined _WIN32 && !defined __EMSCRIPTEN__
 #include "bt2_winhome.h" // BerntTracker (Windows): the BT2 folders in Documents
+#include "bt2_fs.h"
 #endif
 
 // hide POSIX warnings for chdir()
@@ -53,7 +55,6 @@
 
 #define FILENAME_TEXT_X 170
 #define FILESIZE_TEXT_X 295
-#define DISKOP_MAX_DRIVE_BUTTONS 8
 
 #ifdef _WIN32
 #define PARENT_DIR_STR L".."
@@ -157,16 +158,7 @@ void updateCurrSongFilename(void) // for window title
 	modTmpFNameUTF8 = cp850ToUtf8(modTmpFName);
 }
 
-// drive buttons for Windows
-#ifdef _WIN32
-static char logicalDriveNames[26][3] = 
-{
-	"A:", "B:", "C:", "D:", "E:", "F:", "G:", "H:", "I:", "J:", "K:", "L:", "M:",
-	"N:", "O:", "P:", "Q:", "R:", "S:", "T:", "U:", "V:", "W:", "X:", "Y:", "Z:"
-};
-static uint32_t numLogicalDrives;
-static uint32_t driveIndexes[DISKOP_MAX_DRIVE_BUTTONS];
-#endif
+// (BerntTracker: no drive buttons on Windows - the same buttons as in the web version, see bt2_diskop.h)
 
 char *getDiskOpFilename(void)
 {
@@ -403,6 +395,52 @@ static void removeQuestionmarksFromString(char *s)
 	}
 }
 
+#ifdef BT2_DISKOP
+/* BerntTracker: a new name for a file or folder must be a plain name in the folder it is in.
+** With "/" or ".." a rename could move it (or a whole folder) out of the user's folders, where it
+** would look deleted.
+*/
+static bool isPlainName(const char *name)
+{
+	if (name == NULL || name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
+		return false;
+
+	if (strchr(name, '/') != NULL || strchr(name, '\\') != NULL)
+		return false;
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	// and nothing Windows reads as something else: "D:song.xm" is on another disk, "a:b" is a hidden part of
+	// a file, and Windows drops spaces and dots at the end of a name (".. " would be the folder above)
+	for (const char *p = name; *p != '\0'; p++)
+	{
+		if ((uint8_t)*p < 0x20 || strchr(":*?\"<>|", *p) != NULL)
+			return false;
+	}
+
+	const char last = name[strlen(name) - 1];
+	if (last == ' ' || last == '.')
+		return false;
+
+	// and not one of Windows' device names ("nul.xm" and "con" are devices, not files)
+	UNICHAR *nameU = cp850ToUnichar((char *)name);
+	char *utf8 = (nameU != NULL) ? bt2Utf8(nameU) : NULL;
+	const bool device = (utf8 == NULL) || bt2FsIsDeviceName(utf8);
+	free(utf8);
+	free(nameU);
+	if (device)
+		return false;
+#endif
+
+	return true;
+}
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#define NOT_PLAIN_NAME_TEXT "Invalid name! It can't contain \\ / : * ? \" < > | or be CON, NUL etc."
+#else
+#define NOT_PLAIN_NAME_TEXT "The name can't contain / or \\, and can't be \".\" or \"..\"!"
+#endif
+#endif
+
 #ifdef _WIN32 // WINDOWS SPECIFIC FILE OPERATION ROUTINES
 
 bool fileExistsAnsi(char *str)
@@ -417,23 +455,65 @@ bool fileExistsAnsi(char *str)
 	return retVal;
 }
 
-static bool deleteDirRecursive(UNICHAR *strU)
+/* BerntTracker: Delete puts the file or folder in Windows' Recycle Bin, so one deleted by mistake can be put
+** back. SHFileOperationW needs the full path, followed by two zeros: FT2 gave it the name with one zero, and
+** whatever came after the name in memory was read as more names to delete (other files and folders).
+*/
+static bool deleteToRecycleBin(const UNICHAR *strU)
 {
-	SHFILEOPSTRUCTW shfo;
+	const DWORD n = GetFullPathNameW(strU, 0, NULL, NULL);
+	if (n == 0)
+		return false;
 
+	wchar_t *from = (wchar_t *)calloc((size_t)n + 2, sizeof (wchar_t)); // (zeros: the two at the end)
+	if (from == NULL)
+		return false;
+
+	const DWORD len = GetFullPathNameW(strU, n + 1, from, NULL);
+	if (len == 0 || len > n)
+	{
+		free(from);
+		return false;
+	}
+
+	SHFILEOPSTRUCTW shfo;
 	memset(&shfo, 0, sizeof (shfo));
 	shfo.wFunc = FO_DELETE;
-	shfo.fFlags = FOF_SILENT | FOF_NOERRORUI | FOF_NOCONFIRMATION;
-	shfo.pFrom = strU;
+	shfo.fFlags = FOF_SILENT | FOF_NOERRORUI | FOF_NOCONFIRMATION | FOF_ALLOWUNDO;
+	shfo.pFrom = from;
 
-	return (SHFileOperationW(&shfo) == 0);
+	const bool ok = (SHFileOperationW(&shfo) == 0 && !shfo.fAnyOperationsAborted);
+	free(from);
+	return ok;
+}
+
+static bool deleteDirRecursive(UNICHAR *strU)
+{
+	return deleteToRecycleBin(strU);
+}
+
+static bool isDeviceNameU(const UNICHAR *nameU) // BerntTracker: "nul.xm", "con" ... are devices, not files
+{
+	char *name = bt2Utf8(nameU);
+	const bool dev = (name == NULL) || bt2FsIsDeviceName(name);
+	free(name);
+	return dev;
 }
 
 static bool makeDirAnsi(char *str)
 {
+	if (!isPlainName(str)) // BerntTracker: the same rule as the web version
+		return false;
+
 	UNICHAR *strU = cp850ToUnichar(str);
 	if (strU == NULL)
 		return false;
+
+	if (isDeviceNameU(strU))
+	{
+		free(strU);
+		return false;
+	}
 
 	int32_t retVal = _wmkdir(strU);
 	free(strU);
@@ -443,63 +523,25 @@ static bool makeDirAnsi(char *str)
 
 static bool renameAnsi(UNICHAR *oldNameU, char *newName)
 {
+	if (!isPlainName(newName)) // BerntTracker: the same rule as the web version
+		return false;
+
 	UNICHAR *newNameU = cp850ToUnichar(newName);
 	if (newNameU == NULL)
 		return false;
 
-	int32_t retVal = UNICHAR_RENAME(oldNameU, newNameU);
+	if (isDeviceNameU(newNameU))
+	{
+		free(newNameU);
+		return false;
+	}
+
+	// BerntTracker: only a new name, never copied (_wrename may copy to the new name and delete the file; with
+	// a device name the copy goes nowhere). Fails if the new name is taken.
+	const bool ok = MoveFileExW(oldNameU, newNameU, 0) != 0;
 	free(newNameU);
 
-	return (retVal == 0);
-}
-
-static void setupDiskOpDrives(void) // Windows only
-{
-	fillRect(134, 29, 31, 111, PAL_DESKTOP);
-	numLogicalDrives = 0;
-
-	// get number of drives and drive names
-	const uint32_t drivesBitmask = GetLogicalDrives();
-	for (int32_t i = 0; i < 8*sizeof (uint32_t); i++)
-	{
-		if ((drivesBitmask & (1 << i)) != 0)
-		{
-			driveIndexes[numLogicalDrives++] = i;
-			if (numLogicalDrives == DISKOP_MAX_DRIVE_BUTTONS)
-				break;
-		}
-	}
-
-	// hide all buttons
-	for (uint16_t i = 0; i < DISKOP_MAX_DRIVE_BUTTONS; i++)
-		hidePushButton(PB_DISKOP_DRIVE1 + i);
-
-	// set button names and show buttons
-	for (uint16_t i = 0; i < numLogicalDrives; i++)
-	{
-		pushButtons[PB_DISKOP_DRIVE1 + i].caption = logicalDriveNames[driveIndexes[i]];
-		showPushButton(PB_DISKOP_DRIVE1 + i);
-	}
-}
-
-static void openDrive(char *str) // Windows only
-{
-	if (mouse.mode == MOUSE_MODE_DELETE)
-	{
-		okBox(0, "System message", "Drive deletion is not implemented!", NULL);
-		return;
-	}
-
-	if (str == NULL || *str == '\0')
-	{
-		okBox(0, "System message", "Couldn't open drive!", NULL);
-		return;
-	}
-
-	if (chdir(str) != 0)
-		okBox(0, "System message", "Couldn't open drive! Please make sure there's a disk in it.", NULL);
-	else
-		editor.diskOpReadDir = true;
+	return ok;
 }
 
 #else // NON-WINDOWS SPECIFIC FILE OPERATION ROUTINES
@@ -599,24 +641,10 @@ static bool deleteDirRecursive(UNICHAR *strU)
 }
 #endif
 
-#ifdef __EMSCRIPTEN__
-/* BerntTracker (web): a new name for a file or folder must be a plain name in the folder it is in.
-** With "/" or ".." a rename could move it (or a whole folder) out of the user's folders, where it
-** would look deleted.
-*/
-static bool webIsPlainName(const char *name)
-{
-	if (name == NULL || name[0] == '\0' || strcmp(name, ".") == 0 || strcmp(name, "..") == 0)
-		return false;
-
-	return strchr(name, '/') == NULL && strchr(name, '\\') == NULL;
-}
-#endif
-
 static bool makeDirAnsi(char *str)
 {
-#ifdef __EMSCRIPTEN__
-	if (!webIsPlainName(str))
+#ifdef BT2_DISKOP
+	if (!isPlainName(str))
 		return false;
 #endif
 	UNICHAR *strU = cp850ToUnichar(str);
@@ -639,7 +667,7 @@ static bool renameAnsi(UNICHAR *oldNameU, char *newName)
 		return false;
 
 #ifdef __EMSCRIPTEN__
-	if (!webIsPlainName(newName))
+	if (!isPlainName(newName))
 	{
 		free(newNameU);
 		return false;
@@ -676,6 +704,13 @@ static void openDirectory(UNICHAR *strU)
 
 bool diskOpGoParent(void)
 {
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	if (bt2DiskOpGoParentTop()) // BerntTracker: at the top of the BT2 folder or Modland, like on the iPad
+	{
+		FReq_EntrySelected = -1;
+		return true;
+	}
+#endif
 #ifdef __EMSCRIPTEN__
 	char cwdTmp[PATH_MAX];
 	if (getcwd(cwdTmp, sizeof (cwdTmp)) != NULL && strcmp(cwdTmp, WEB_MODLAND_ROOT) == 0 && chdir(WEB_USER_ROOT) == 0)
@@ -804,9 +839,9 @@ void diskOpSetFilename(uint8_t type, UNICHAR *pathU)
 
 static void openFile(UNICHAR *filenameU)
 {
-#ifdef __EMSCRIPTEN__
-	// BerntTracker (web): songs from the Modland library / demo library are downloaded when first opened
-	if (!webPrepareFile(filenameU))
+#ifdef BT2_DISKOP
+	// BerntTracker: songs from Modland (and the web version's demo songs) are downloaded when first opened
+	if (!bt2PrepareFile(filenameU))
 		return;
 #endif
 
@@ -994,8 +1029,8 @@ static void diskOpSave(bool checkOverwrite)
 		return;
 	}
 
-#ifdef __EMSCRIPTEN__
-	if (!webDiskOpPrepareSaveDir()) // BerntTracker (web): never into the Modland library (kept in memory only)
+#ifdef BT2_DISKOP
+	if (!bt2DiskOpPrepareSaveDir(true)) // BerntTracker: never into Modland (read-only)
 		return;
 #endif
 
@@ -1172,17 +1207,28 @@ static void fileListPressed(int32_t index)
 		case MOUSE_MODE_NORMAL:
 		{
 			if (dirEntry->isDir)
+			{
+#ifdef BT2_DISKOP
+				if (UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR) == 0)
+				{
+					diskOpGoParent(); // BerntTracker: ".." works like the "../" button (the top of BT2 and Modland)
+					break;
+				}
+#endif
 				openDirectory(dirEntry->nameU);
+			}
 			else
+			{
 				openFile(dirEntry->nameU);
+			}
 		}
 		break;
 
 		// delete file/folder
 		case MOUSE_MODE_DELETE:
 		{
-#ifdef __EMSCRIPTEN__
-			if (webDiskOpReadOnlyHere())
+#ifdef BT2_DISKOP
+			if (bt2DiskOpReadOnlyHere())
 			{
 				okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
 				break;
@@ -1215,7 +1261,11 @@ static void fileListPressed(int32_t index)
 					}
 					else
 					{
+#ifdef _WIN32
+						result = deleteToRecycleBin(dirEntry->nameU); // BerntTracker: to the Recycle Bin
+#else
 						result = (UNICHAR_REMOVE(dirEntry->nameU) == 0);
+#endif
 						if (!result)
 							okBox(0, "System message", "Couldn't delete file: Access denied!", NULL);
 						else
@@ -1229,16 +1279,15 @@ static void fileListPressed(int32_t index)
 		// rename file/folder
 		case MOUSE_MODE_RENAME:
 		{
-#ifdef __EMSCRIPTEN__
-			if (webDiskOpReadOnlyHere())
+#ifdef BT2_DISKOP
+			if (bt2DiskOpReadOnlyHere())
 			{
 				okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
 				break;
 			}
-#endif
-#ifdef __EMSCRIPTEN__
+
 			if (UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR) == 0)
-				break; // BerntTracker (web): never rename ".." (it is the folder above: everything in it would move)
+				break; // BerntTracker: never rename ".." (it is the folder above: everything in it would move)
 #endif
 			if (dirEntry->isDir || UNICHAR_STRCMP(dirEntry->nameU, PARENT_DIR_STR)) // don't handle ".." dir
 			{
@@ -1261,10 +1310,10 @@ static void fileListPressed(int32_t index)
 						break;
 					}
 
-#ifdef __EMSCRIPTEN__
-					if (!webIsPlainName(FReq_NameTemp))
+#ifdef BT2_DISKOP
+					if (!isPlainName(FReq_NameTemp))
 					{
-						okBox(0, "System message", "The name can't contain / or \\, and can't be \".\" or \"..\"!", NULL);
+						okBox(0, "System message", NOT_PLAIN_NAME_TEXT, NULL);
 						break;
 					}
 #endif
@@ -2000,9 +2049,6 @@ void diskOp_DrawDirectory(void)
 	drawTextBox(TB_DISKOP_FILENAME);
 
 	displayCurrPath();
-#ifdef _WIN32
-	setupDiskOpDrives();
-#endif
 
 	setScrollBarEnd(SB_DISKOP_LIST, FReq_FileCount);
 	setScrollBarPos(SB_DISKOP_LIST, FReq_DirPos, DONT_TRIGGER_CALLBACK);
@@ -2039,6 +2085,10 @@ static int32_t diskOp_ReadDirectoryThread(void *ptr)
 	freeDirRecBuffer();
 
 	UNICHAR_GETCWD(FReq_CurPathU, PATH_MAX);
+
+#ifdef BT2_DISKOP
+	bt2DiskOpBeforeList(FReq_CurPathU); // BerntTracker: Modland's folders get their songs (empty files) the first time
+#endif
 
 	// read first file
 	int8_t lastFindFileFlag = findFirst(&tmp);
@@ -2340,7 +2390,7 @@ static void drawDiskOpScreen(void)
 	showPushButton(PB_DISKOP_EXIT);
 	showPushButton(PB_DISKOP_PARENT);
 	showPushButton(PB_DISKOP_ROOT);
-#ifdef __EMSCRIPTEN__
+#ifdef BT2_DISKOP
 	showPushButton(PB_DISKOP_IMPORT);
 	showPushButton(PB_DISKOP_EXPORT);
 	showPushButton(PB_DISKOP_MODLAND);
@@ -2472,11 +2522,6 @@ void showDiskOpScreen(void)
 
 void hideDiskOpScreen(void)
 {
-#ifdef _WIN32
-	for (uint16_t i = 0; i < DISKOP_MAX_DRIVE_BUTTONS; i++)
-		hidePushButton(PB_DISKOP_DRIVE1 + i);
-#endif
-
 	hidePushButton(PB_DISKOP_SAVE);
 	hidePushButton(PB_DISKOP_DELETE);
 	hidePushButton(PB_DISKOP_RENAME);
@@ -2485,7 +2530,7 @@ void hideDiskOpScreen(void)
 	hidePushButton(PB_DISKOP_EXIT);
 	hidePushButton(PB_DISKOP_PARENT);
 	hidePushButton(PB_DISKOP_ROOT);
-#ifdef __EMSCRIPTEN__
+#ifdef BT2_DISKOP
 	hidePushButton(PB_DISKOP_IMPORT);
 	hidePushButton(PB_DISKOP_EXPORT);
 	hidePushButton(PB_DISKOP_MODLAND);
@@ -2552,10 +2597,10 @@ void pbDiskOpParent(void)
 
 void pbDiskOpRoot(void)
 {
-#ifdef _WIN32
+#ifdef BT2_DISKOP
+	openDirectory((UNICHAR *)bt2HomeRootU()); // BerntTracker: "BT2" - the user's own folders, not the system root
+#elif defined _WIN32
 	openDirectory(L"\\");
-#elif defined __EMSCRIPTEN__
-	openDirectory("/home/web_user/BT2"); // BerntTracker: the user's own folders, not the system root
 #else
 	openDirectory("/");
 #endif
@@ -2566,17 +2611,6 @@ void cbDiskOpAllFiles(void)
 	FReq_ShowAllFiles ^= 1;
 	editor.diskOpReadDir = true; // refresh dir
 }
-
-#ifdef _WIN32
-void pbDiskOpDrive1(void) { openDrive(logicalDriveNames[driveIndexes[0]]); }
-void pbDiskOpDrive2(void) { openDrive(logicalDriveNames[driveIndexes[1]]); }
-void pbDiskOpDrive3(void) { openDrive(logicalDriveNames[driveIndexes[2]]); }
-void pbDiskOpDrive4(void) { openDrive(logicalDriveNames[driveIndexes[3]]); }
-void pbDiskOpDrive5(void) { openDrive(logicalDriveNames[driveIndexes[4]]); }
-void pbDiskOpDrive6(void) { openDrive(logicalDriveNames[driveIndexes[5]]); }
-void pbDiskOpDrive7(void) { openDrive(logicalDriveNames[driveIndexes[6]]); }
-void pbDiskOpDrive8(void) { openDrive(logicalDriveNames[driveIndexes[7]]); }
-#endif
 
 void pbDiskOpDelete(void)
 {
@@ -2590,8 +2624,8 @@ void pbDiskOpRename(void)
 
 void pbDiskOpMakeDir(void)
 {
-#ifdef __EMSCRIPTEN__
-	if (webDiskOpReadOnlyHere())
+#ifdef BT2_DISKOP
+	if (bt2DiskOpReadOnlyHere())
 	{
 		okBox(0, "System message", "The Modland library is read-only. Use your own folders (Modules etc.) for this.", NULL);
 		return;
@@ -2606,10 +2640,10 @@ void pbDiskOpMakeDir(void)
 			return;
 		}
 
-#ifdef __EMSCRIPTEN__
-		if (!webIsPlainName(FReq_NameTemp))
+#ifdef BT2_DISKOP
+		if (!isPlainName(FReq_NameTemp))
 		{
-			okBox(0, "System message", "The name can't contain / or \\, and can't be \".\" or \"..\"!", NULL);
+			okBox(0, "System message", NOT_PLAIN_NAME_TEXT, NULL);
 			return;
 		}
 #endif
@@ -2623,9 +2657,6 @@ void pbDiskOpMakeDir(void)
 void pbDiskOpRefresh(void)
 {
 	editor.diskOpReadDir = true; // refresh dir
-#ifdef _WIN32
-	setupDiskOpDrives();
-#endif
 }
 
 void pbDiskOpSetPath(void)
@@ -2740,6 +2771,50 @@ void rbDiskOpSmpSaveWav(void)
 	diskOpChangeFilenameExt(".wav");
 }
 
+#ifdef BT2_DISKOP
+// ------------------------------------------------------------------------------------------------
+// BerntTracker: Disk Op.'s own buttons, the same in the web version and the Windows program
+
+// "Mod-land": the online library (https://modland.com, the Fasttracker 2 folder) as folders
+void pbDiskOpModland(void)
+{
+	if (!bt2ModlandOpen())
+		return; // (it said what went wrong)
+
+	if (FReq_Item != DISKOP_ITEM_MODULE)
+		rbDiskOpModule();
+
+	openDirectory((UNICHAR *)bt2ModlandRootU());
+}
+
+// "Find": the search window (songs and folders, in the user's own files and in Modland)
+void pbDiskOpFind(void)
+{
+	bt2SearchOpen();
+}
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+bool diskOpGetFilePathW(wchar_t *out, size_t outLen) // BerntTracker (Windows, Exp.): current folder + the name in the "File:" box
+{
+	out[0] = L'\0';
+	if (FReq_CurPathU == NULL || FReq_CurPathU[0] == L'\0' || FReq_FileName == NULL || FReq_FileName[0] == '\0' || outLen < 4)
+		return false;
+
+	UNICHAR *nameU = cp850ToUnichar(FReq_FileName); // (the "File:" box is CP850, like FT2)
+	if (nameU == NULL)
+		return false;
+
+	const size_t len = wcslen(FReq_CurPathU);
+	const bool sep = (FReq_CurPathU[len - 1] == L'\\');
+	_snwprintf(out, outLen - 1, L"%ls%ls%ls", FReq_CurPathU, sep ? L"" : L"\\", nameU);
+	out[outLen - 1] = L'\0';
+	free(nameU);
+
+	return true;
+}
+#endif
+
 #ifdef __EMSCRIPTEN__
 // ------------------------------------------------------------------------------------------------
 // BerntTracker: web version helpers
@@ -2748,27 +2823,6 @@ void rbDiskOpSmpSaveWav(void)
 
 void pbDiskOpImport(void) { } // the page opens the file picker itself (it must happen during the tap)
 void pbDiskOpExport(void) { } // same for sharing/downloading the file
-
-// "Modland" button: the online library (https://modland.com, the Fasttracker 2 folder) as folders
-void pbDiskOpModland(void)
-{
-	if (!webModlandPrepare())
-		return; // the page says what went wrong
-
-	if (FReq_Item != DISKOP_ITEM_MODULE)
-		rbDiskOpModule();
-
-	openDirectory(WEB_MODLAND_ROOT);
-}
-
-// "Find" button: the page's search window (songs and folders, in the user's own files and in Modland).
-// (The page also opens it right in the tap/click, so the iPad keyboard can come up.)
-EM_JS(void, bt2_searchOpen, (void), { if (globalThis.BT2 && globalThis.BT2.search) globalThis.BT2.search.open(); });
-
-void pbDiskOpFind(void)
-{
-	bt2_searchOpen();
-}
 
 bool webDiskOpIsShown(void)
 {

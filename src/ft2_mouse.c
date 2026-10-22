@@ -22,6 +22,9 @@
 #include "ft2_structs.h"
 #include "ft2_keyboard.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include "bt2_winsearch.h" // BerntTracker (Windows): the search window
+#endif
 
 #define NUM_CURSORS 6
 
@@ -936,6 +939,14 @@ void readMouseXY(void)
 	// multiply coords by video upscaling factors
 	mouse.x = (int32_t)floor(mx * video.dMouseXMul);
 	mouse.y = (int32_t)floor(my * video.dMouseYMul);
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	if (bt2SearchIsOpen())
+	{
+		hideSprite(SPRITE_MOUSE_POINTER); // BerntTracker: the search window shows Windows' own pointer
+		return;
+	}
+#endif
 
 	if ((config.specialFlags2 & HARDWARE_MOUSE) || tkMouseIsOverKeyboard()) // BerntTracker: no FT2 pointer over the keyboard
 	{

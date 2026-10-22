@@ -71,7 +71,7 @@ done
 OBJS+=("$OUT/obj/resources.o")
 
 "$TC/x86_64-w64-mingw32-clang++" -O2 -s -mwindows -Wl,--no-insert-timestamp -o "$OUT/pkg/$EXE" "${OBJS[@]}" \
-	-L"$SDL/lib" -lSDL2main -lSDL2 -lshlwapi -lwinmm -lole32 -luuid -lwinhttp -lbcrypt -lgdi32 -static-libgcc -static-libstdc++
+	-L"$SDL/lib" -lSDL2main -lSDL2 -lshlwapi -lwinmm -lole32 -luuid -lwinhttp -lbcrypt -lgdi32 -lcomdlg32 -static-libgcc -static-libstdc++
 cp "$SDL/bin/SDL2.dll" "$OUT/pkg/SDL2.dll"
 
 # SDL-versjonen programmet er bygget med (oppdateringen bytter SDL2.dll bare når den endres)
@@ -94,6 +94,9 @@ readme = ('Bernttracker II for Windows\r\n'
 	'trykk «Mer info» og så «Kjør likevel» (programmet er ikke signert).\r\n\r\n'
 	'Låtene dine lagres i Dokumenter\\BT2 (Modules, Instruments, Samples, Patterns, Tracks),\r\n'
 	'og demo-låtene legges i Dokumenter\\BT2\\Demo Tracks – som i nettversjonen.\r\n\r\n'
+	'Disk Op. har de samme knappene som på iPad: «BT2» (mappene dine), «Imp.» (hent filer inn,\r\n'
+	'zip-filer pakkes ut), «Exp.» (lagre en kopi et annet sted), «Mod-land» (Modland-biblioteket)\r\n'
+	'og «Find» (søk, også Ctrl+F). Låter du åpner fra Modland lagres i Dokumenter\\BT2\\Modland.\r\n\r\n'
 	'Programmet ser etter ny versjon hver gang det starter, og du velger selv om du vil\r\n'
 	'oppdatere. En oppdatering bytter bare selve programfilene. Låtene, samplene, mappene\r\n'
 	'og innstillingene dine blir aldri rørt.\r\n\r\n'

@@ -509,8 +509,7 @@ static int32_t saveSampleThread(void *ptr)
 	const UNICHAR *oldPathU = getDiskOpCurPath();
 
 	// in "save range mode", we must enter the sample directory
-	if (saveRangeFlag)
-		UNICHAR_CHDIR(getDiskOpSmpPath());
+	// (BerntTracker: saveRange() went there already - or to BT2/Modland/... - and checked the name there)
 
 	switch (editor.sampleSaveMode)
 	{

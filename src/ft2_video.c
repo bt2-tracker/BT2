@@ -36,6 +36,9 @@
 #include "ft2_structs.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 #include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include "bt2_winoverlay.h" // BerntTracker (Windows): what the web version shows on top of FT2
+#endif
 #include "ft2_asio.h" // BerntTracker (Windows): ASIO
 #include "ft2_scrollbars.h"
 #include "ft2_pushbuttons.h"
@@ -228,6 +231,10 @@ void flipFrame(void)
 		SDL_RenderCopy(video.renderer, video.texture, &screenRect, NULL);
 
 	tkRender(video.renderer); // BerntTracker: on-screen keyboard below the FT2 screen
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	bt2OverlayRender(video.renderer); // BerntTracker (Windows): messages, the download box and the search window, like the web version
+#endif
 
 #ifdef __EMSCRIPTEN__
 	webFrame();

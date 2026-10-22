@@ -43,6 +43,9 @@
 #include "bt2_winstart.h" // BerntTracker (Windows): the start screen, updates and folders, like the web version
 #include "bt2_winupdate.h"
 #include "bt2_winhome.h"
+#include "bt2_windiskop.h"
+#include "bt2_winsearch.h"
+#include "bt2_winoverlay.h"
 #endif
 
 static void initializeVars(void);
@@ -176,6 +179,7 @@ int main(int argc, char *argv[])
 	webInit(); // BerntTracker: web folders and settings
 #elif defined _WIN32
 	bt2HomeSetup(); // BerntTracker: the same folders and first-time settings as the web version (Documents\BT2)
+	bt2DiskOpInit(); // BerntTracker: Disk Op. like on the iPad, and Modland
 #endif
 
 	if (!setupWindow() || !setupRenderer())
@@ -392,6 +396,9 @@ static void cleanUpAndExit(void) // never call this inside the main loop!
 #if defined _WIN32 && !defined __EMSCRIPTEN__
 	bt2UpdateShutdown(); // BerntTracker (Windows)
 	bt2HomeShutdown();
+	bt2DiskOpShutdown();
+	bt2SearchFree();
+	bt2OverlayFree();
 #endif
 
 	closeAudio();
