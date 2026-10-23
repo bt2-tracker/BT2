@@ -5,7 +5,7 @@ ROOT=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 from PIL import Image
 OW,H=154,32   # originalens logo-bredde
 W=150         # Bernttracker-logoen (4 px smalere, saa boksen ved siden av faar plass til mer tekst)
-BW=29         # boksen til hoeyre ("by Saddam Hussein & The Whole King Random"), originalen: 25 px
+BW=29         # boksen til hoeyre ("by Saddam Hussein & The Old King Random"), originalen: 25 px
 im=Image.open(os.path.join(ROOT,'src','gfxdata','bmp','ft2LogoBadges.bmp')); pal=im.getpalette(); px=im.load()
 rgb2ft={(0,0,0):0,(0x53,0x97,0xFF):1,(0,0,0x67):2,(0x4B,0xFF,0xFF):3,(0xAB,0x77,0x87):4,(255,255,255):5,(0x7F,0x7F,0x7F):6,(0xAB,0xCD,0xEF):7,(0x73,0x37,0x47):8,(0xF7,0xCB,0xDB):9,(0x43,0x43,0x43):10,(0xD3,0xD3,0xD3):11}
 def frame(f):
@@ -128,7 +128,7 @@ FONT={
  'R':["##.","##.","#.#"],'S':[".##",".#.","##."],'T':["###",".#.",".#."],'U':["#.#","#.#","###"],
  'W':["#.#.#","#.#.#",".#.#."],'Y':["#.#",".#.",".#."],'&':[".#..","#.##","####"],' ':["..","..",".."],
 }
-LINES=["BY","SADDAM","HUSSEIN","& THE","WHOLE","KING","RANDOM"]
+LINES=["BY","SADDAM","HUSSEIN","& THE","OLD","KING","RANDOM"]
 D1,D2=9,8  # PAL_DSKTOP1 (lys), PAL_DSKTOP2 (moerk)
 def text_w(s): return sum(len(FONT[c][0]) for c in s)+len(s)-1
 badge=[[DESK]*BW for _ in range(H)]

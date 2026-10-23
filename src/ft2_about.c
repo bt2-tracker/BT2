@@ -41,7 +41,7 @@ typedef struct
 } matrix_t;
 
 static char *customText0 = "Original Bagdad Tracker by Saddam Hussein.";
-static char *customText1 = "Clone by The Whole King Random";
+static char *customText1 = "Clone by The Old King Random";
 static char customText3[128];
 static int16_t customText0X, customText0Y, customText1X, customText1Y;
 static int16_t customText3X, customText3Y;
