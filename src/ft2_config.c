@@ -916,8 +916,9 @@ static void setConfigAudioCheckButtonStates(void)
 }
 
 #ifdef _WIN32
-// BerntTracker (Windows): "Exclusive" next to "Audio output devices:", and how it went (ASIO or the
-// exclusive mode's block size, or why not)
+// BerntTracker (Windows): "ASIO" next to "Audio output devices:" (v0.31, was "Exclusive"), ticked = ASIO
+// (the standard), unticked = Windows' ordinary sound. Also how it went: ASIO's block size, or that there
+// was no ASIO and Windows' exclusive mode is used (its block size, or why not)
 static void drawWinExclusiveLabel(void)
 {
 	if (winAsioActive())
@@ -926,9 +927,17 @@ static void drawWinExclusiveLabel(void)
 		return;
 	}
 
-	textOutShadow(266, 4, PAL_FORGRND, PAL_DSKTOP2, "Exclusive");
+	textOutShadow(266, 4, PAL_FORGRND, PAL_DSKTOP2, "ASIO");
 	if (!(config.specialFlags2 & WIN_SHARED_AUDIO))
-		textOutShadow(266 + textWidth("Exclusive") + 5, 4, PAL_FORGRND, PAL_DSKTOP2, winExclusiveStatus());
+	{
+		char status[48];
+		snprintf(status, sizeof (status), "n/a, excl %s", winExclusiveStatus());
+		if (266 + textWidth("ASIO") + 5 + textWidth(status) > 382)
+			snprintf(status, sizeof (status), "n/a,excl %s", winExclusiveStatus());
+		if (266 + textWidth("ASIO") + 5 + textWidth(status) > 382)
+			strcpy(status, "n/a");
+		textOutShadow(266 + textWidth("ASIO") + 5, 4, PAL_FORGRND, PAL_DSKTOP2, status);
+	}
 }
 #endif
 

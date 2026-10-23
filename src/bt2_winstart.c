@@ -43,6 +43,7 @@
 #define LABEL_START      "Trykk for å starte"
 #define LABEL_FULLSCREEN "Start i fullskjerm"
 #define LABEL_BUFFER     "Lydbuffer:"
+#define LABEL_SYSTEM     "Lydsystem:"   // (v0.31: ASIO or Windows' ordinary sound, only in the Windows program)
 #define LABEL_FOLDER     "Åpne BT2-mappa"
 #define NOTE_BUFFER      "Minst gir lavest forsinkelse. Knitrer lyden, velg Normal eller Stor."
 #define NOTE_APP         "Appen sjekker etter ny versjon hver gang den åpnes, og du velger selv om du vil oppdatere. " \
@@ -72,7 +73,7 @@ static const buttonStyle styleSmallOn = { 15.0f, 400, 18.0f, 10.0f,  8.0f, 1.0f,
 enum
 {
 	HIT_START, HIT_FULLSCREEN, HIT_BUFFER0, HIT_BUFFER1, HIT_BUFFER2, HIT_UPDATE_NOW, HIT_UPDATE_LATER,
-	HIT_DIAG, HIT_FOLDER, HIT_LINK, HIT_DIAG_CLOSE,
+	HIT_DIAG, HIT_FOLDER, HIT_LINK, HIT_DIAG_CLOSE, HIT_SYSTEM0, HIT_SYSTEM1,
 	HIT_COUNT
 };
 
@@ -94,6 +95,7 @@ static uint64_t toastUntil;
 static int32_t bufferChoice; // 0 = Minst, 1 = Normal, 2 = Stor (FT2's Smaller/Medium/Bigger latency)
 static bt2UpdateInfo upd;
 static char audioLine[200];
+static char systemNote[200]; // (v0.31: why ASIO isn't used although it is chosen, or empty)
 
 // ------------------------------------------------------------------------------------------------
 // the stars: the same as the About screen in FT2 (ft2_about.c), as in the web version
@@ -216,6 +218,8 @@ static const char *engineName(void)
 	return "ingen lydenhet";
 }
 
+static void buildSystemNote(void);
+
 static void buildAudioLine(void)
 {
 	const int32_t ms = latencyMs();
@@ -225,6 +229,20 @@ static void buildAudioLine(void)
 		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b> · %u Hz · ca. %d ms", engineName(), audio.haveFreq, ms);
 	else
 		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b> · %u Hz · buffer %u samples", engineName(), audio.haveFreq, audio.haveSamples);
+
+	buildSystemNote();
+}
+
+static void buildSystemNote(void)
+{
+	systemNote[0] = '\0';
+	if ((config.specialFlags2 & WIN_SHARED_AUDIO) || audio.dev == WIN_ASIO_DEVICE_ID)
+		return;
+
+	if (!winAsioInstalled())
+		snprintf(systemNote, sizeof (systemNote), "Fant ingen ASIO-driver (f.eks. ASIO4ALL), så lyden går via %s.", (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) ? "Windows eksklusiv" : "Windows vanlig");
+	else
+		snprintf(systemNote, sizeof (systemNote), "ASIO startet ikke. Lukk andre programmer som bruker lyden, og velg ASIO på nytt.");
 }
 
 static int32_t bufferChoiceFromConfig(void)
@@ -666,6 +684,44 @@ static float buildStart(bt2Canvas *c, float top)
 	}
 	y += l13 + gap;
 
+	// «Lydsystem: ASIO Windows» (v0.31; ASIO is the standard, «Windows» is Windows' ordinary shared sound)
+	{
+		static const char *names[2] = { "ASIO", "Windows" };
+		const int32_t chosen = (config.specialFlags2 & WIN_SHARED_AUDIO) ? 1 : 0;
+		float w[2], rowH = 44.0f;
+		const float labelW = widthCss(f13, LABEL_SYSTEM);
+		float total = labelW;
+		for (int32_t i = 0; i < 2; i++)
+		{
+			float hh;
+			buttonSize(&styleSmall, names[i], &w[i], &hh);
+			if (hh > rowH)
+				rowH = hh;
+			total += 10.0f + w[i];
+		}
+
+		if (c != NULL)
+		{
+			float x = cx - total * 0.5f;
+			text(c, f13, x, y + (rowH - l13) * 0.5f, labelW + 4.0f, l13, BT2_ALIGN_LEFT, C_DIM, LABEL_SYSTEM);
+			x += labelW + 10.0f;
+
+			for (int32_t i = 0; i < 2; i++)
+			{
+				drawButton(c, (chosen == i) ? &styleSmallOn : &styleSmall, names[i], x, y, w[i], rowH, HIT_SYSTEM0 + i);
+				x += w[i] + 10.0f;
+			}
+		}
+		y += rowH + gap;
+
+		if (systemNote[0] != '\0')
+		{
+			const float hSys = linesCss(f13, textW, l13, systemNote);
+			text(c, f13, 16.0f, y, textW, l13, BT2_ALIGN_CENTER, C_DIM, systemNote);
+			y += hSys + gap;
+		}
+	}
+
 	// «Lydbuffer: Minst Normal Stor»
 	{
 		static const char *names[3] = { "Minst", "Normal", "Stor" };
@@ -994,6 +1050,22 @@ static void windowToPixels(int32_t *x, int32_t *y)
 	}
 }
 
+static void setAudioSystem(int32_t choice) // v0.31: 0 = ASIO (standard), 1 = Windows' ordinary sound
+{
+	const bool shared = (choice == 1);
+	if (shared == ((config.specialFlags2 & WIN_SHARED_AUDIO) != 0) && (shared || audio.dev == WIN_ASIO_DEVICE_ID))
+		return; // (choosing ASIO again tries to start it again, e.g. after closing another program)
+
+	if (shared)
+		config.specialFlags2 |= WIN_SHARED_AUDIO;
+	else
+		config.specialFlags2 &= ~WIN_SHARED_AUDIO;
+
+	setNewAudioSettings(); // (opens the sound again right away)
+	saveConfig(CONFIG_HIDE_ERRORS);
+	buildAudioLine();
+}
+
 static void setBufferChoice(int32_t choice)
 {
 	if (choice == bufferChoice)
@@ -1123,6 +1195,12 @@ bool bt2StartScreen(void)
 						case HIT_BUFFER1:
 						case HIT_BUFFER2:
 							setBufferChoice(h - HIT_BUFFER0);
+							needRender = true;
+							break;
+
+						case HIT_SYSTEM0:
+						case HIT_SYSTEM1:
+							setAudioSystem(h - HIT_SYSTEM0);
 							needRender = true;
 							break;
 
