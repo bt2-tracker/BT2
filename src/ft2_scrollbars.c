@@ -20,6 +20,7 @@
 #include "ft2_video.h"
 #include "ft2_palette.h"
 #include "ft2_structs.h"
+#include "bt2_find.h"
 
 #define FIXED_THUMB_SIZE 15
 
@@ -109,7 +110,13 @@ scrollBar_t scrollBars[NUM_SCROLLBARS] =
 
 	// ------ DISK OP. SCROLLBARS ------
 	//x,   y,  w,  h,   type,               style                         funcOnDown
-	{ 335, 15, 18, 143, SCROLLBAR_VERTICAL, SCROLLBAR_DYNAMIC_THUMB_SIZE, sbDiskOpSetPos }
+	{ 335, 15, 18, 143, SCROLLBAR_VERTICAL, SCROLLBAR_DYNAMIC_THUMB_SIZE, sbDiskOpSetPos },
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// ------ BERNTTRACKER: FIND SCREEN SCROLLBARS (bt2_find.c) ------
+	//x,   y,  w,  h,   type,               style                         funcOnDown
+	{ 611, 31, 18, 113, SCROLLBAR_VERTICAL, SCROLLBAR_DYNAMIC_THUMB_SIZE, sbFindListPos },
+#endif
 };
 
 void drawScrollBar(uint16_t scrollBarID)
@@ -710,6 +717,12 @@ void initializeScrollBars(void)
 	// disk op.
 	setScrollBarPageLength(SB_DISKOP_LIST, DISKOP_ENTRY_NUM);
 	setScrollBarEnd(SB_DISKOP_LIST, 1);
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// BerntTracker: Find screen (12 hits are seen at a time)
+	setScrollBarPageLength(SB_FIND_LIST, 12);
+	setScrollBarEnd(SB_FIND_LIST, 1);
+#endif
 
 	// instrument editor
 	setScrollBarPageLength(SB_INST_VOL, 1);

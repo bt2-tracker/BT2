@@ -43,6 +43,7 @@
 #include "ft2_scrollbars.h"
 #include "ft2_pushbuttons.h"
 #include "ft2_tables.h"
+#include "bt2_find.h" // BerntTracker: the Find screen
 
 static const uint8_t textCursorData[12] =
 {
@@ -233,7 +234,7 @@ void flipFrame(void)
 	tkRender(video.renderer); // BerntTracker: on-screen keyboard below the FT2 screen
 
 #if defined _WIN32 && !defined __EMSCRIPTEN__
-	bt2OverlayRender(video.renderer); // BerntTracker (Windows): messages, the download box and the search window, like the web version
+	bt2OverlayRender(video.renderer); // BerntTracker (Windows): messages and the download box, like the web version
 #endif
 
 #ifdef __EMSCRIPTEN__
@@ -384,8 +385,17 @@ static void applyScreenHeight(int32_t newH)
 	if (editor.mainLoopOngoing) // redraw everything at the new height
 	{
 		memset(video.frameBuffer, 0, SCREEN_W * SCREEN_H_MAX * sizeof (uint32_t));
-		hideTopScreen();
-		showTopScreen(true);
+#if defined __EMSCRIPTEN__ || defined _WIN32
+		if (ui.bt2FindShown)
+		{
+			redrawFindScreen(); // (the Find screen stays)
+		}
+		else
+#endif
+		{
+			hideTopScreen();
+			showTopScreen(true);
+		}
 		showBottomScreen();
 		if (ui.pattChanScrollShown)
 			setScrollBarPos(SB_CHAN_SCROLL, scrollBars[SB_CHAN_SCROLL].pos, false);
@@ -1246,7 +1256,12 @@ void handleRedrawing(void)
 {
 	videoFillExtraScreenArea(); // BerntTracker
 
-	if (!ui.configScreenShown && !ui.helpScreenShown)
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	if (ui.bt2FindShown)
+		findScreenFrame(); // BerntTracker: the Find screen searches as you type
+#endif
+
+	if (!ui.configScreenShown && !ui.helpScreenShown && !ui.bt2FindShown)
 	{
 		if (ui.aboutScreenShown)
 		{
@@ -1370,7 +1385,7 @@ static void drawReplayerData(void)
 		bool drawPosText = true;
 		if (ui.configScreenShown || ui.nibblesShown     ||
 			ui.helpScreenShown   || ui.aboutScreenShown ||
-			ui.diskOpShown)
+			ui.diskOpShown       || ui.bt2FindShown)
 		{
 			drawPosText = false;
 		}

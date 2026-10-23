@@ -17,6 +17,7 @@
 #include "ft2_wav_renderer.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#include "bt2_find.h"
 
 radioButton_t radioButtons[NUM_RADIOBUTTONS] =
 {
@@ -219,7 +220,19 @@ radioButton_t radioButtons[NUM_RADIOBUTTONS] =
 	// WAV RENDERER BITDEPTH
 	//x,   y,  w,  group,                        funcOnUp
 	{ 130, 95, 52, RB_GROUP_WAV_RENDER_BITDEPTH, rbWavRenderBitDepth16 },
-	{ 195, 95, 93, RB_GROUP_WAV_RENDER_BITDEPTH, rbWavRenderBitDepth32 }
+	{ 195, 95, 93, RB_GROUP_WAV_RENDER_BITDEPTH, rbWavRenderBitDepth32 },
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// BERNTTRACKER: FIND SCREEN (bt2_find.c)
+	//x, y,   w,  group,               funcOnUp
+	{ 5,  16, 40, RB_GROUP_FIND_WHERE, rbFindWhereAll },
+	{ 5,  30, 66, RB_GROUP_FIND_WHERE, rbFindWhereOwn },
+	{ 5,  44, 66, RB_GROUP_FIND_WHERE, rbFindWhereModland },
+	{ 5,  72, 40, RB_GROUP_FIND_WHAT,  rbFindWhatAll },
+	{ 5,  86, 58, RB_GROUP_FIND_WHAT,  rbFindWhatSongs },
+	{ 5, 100, 64, RB_GROUP_FIND_WHAT,  rbFindWhatFolders },
+	{ 5, 114, 92, RB_GROUP_FIND_WHAT,  rbFindWhatSounds },
+#endif
 };
 
 void drawRadioButton(uint16_t radioButtonID)

@@ -53,6 +53,11 @@ enum // SCROLLBARS
 	// Disk Op.
 	SB_DISKOP_LIST,
 
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// BerntTracker: Find screen (bt2_find.c)
+	SB_FIND_LIST,
+#endif
+
 	NUM_SCROLLBARS
 };
 

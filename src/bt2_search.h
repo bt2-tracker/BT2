@@ -1,8 +1,8 @@
 #pragma once
 
-/* BerntTracker: what the search window finds (Disk Op.'s "Find", Ctrl+F), the same rules as the web
-** version's search window (BT2.search in index.html): songs, folders, instruments and samples in the
-** user's own files (the BT2 folder) and in Modland.
+/* BerntTracker: what the Find screen finds (Disk Op.'s "Find", Ctrl+F; bt2_find.c), the same in the web version
+** and the Windows program: songs, folders, instruments and samples in the user's own files (the BT2 folder)
+** and in Modland.
 **
 ** Typing filters at once: every word must be in the path. Best first: all words in the name itself,
 ** the name starting with the first word, folders, and (with nothing typed) the user's own files.

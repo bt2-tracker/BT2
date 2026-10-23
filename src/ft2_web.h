@@ -49,7 +49,7 @@ void webToggleFullscreen(void); // Alt+Enter: the browser's fullscreen
 #define WEB_USER_ROOT "/home/web_user/BT2" // the user's own folders (stored in the browser)
 void webSyncFiles(void);
 // (Disk Op.'s Modland and folder rules: bt2_diskop.h, the same as in the Windows program)
-void webHandlePageRequests(void);   // in the main loop: requests from the page (e.g. "show this folder" from the search window)
+void webHandlePageRequests(void);   // in the main loop: requests from the page (e.g. Ctrl+F/Cmd+F: the Find screen)
 
 // Modland (online library): the folders are in memory only (bt2_modland.c, the same as in the Windows program)
 #define WEB_MODLAND_ROOT "/Modland"

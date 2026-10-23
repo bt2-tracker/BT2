@@ -22,9 +22,7 @@
 #include "ft2_structs.h"
 #include "ft2_keyboard.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-#include "bt2_winsearch.h" // BerntTracker (Windows): the search window
-#endif
+#include "bt2_find.h" // BerntTracker: the Find screen
 
 #define NUM_CURSORS 6
 
@@ -460,7 +458,14 @@ static void mouseWheelIncRow(void)
 
 void mouseWheelHandler(bool directionUp)
 {
-	if (ui.sysReqShown || editor.editTextFlag)
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// BerntTracker: the Find screen's search box is always being typed in, the wheel works there all the same
+	const bool findTyping = ui.bt2FindShown && editor.editTextFlag && mouse.lastEditBox == TB_FIND_QUERY;
+#else
+	const bool findTyping = false;
+#endif
+
+	if (ui.sysReqShown || (editor.editTextFlag && !findTyping))
 		return;
 
 	if (ui.extendedPatternEditor)
@@ -497,6 +502,12 @@ void mouseWheelHandler(bool directionUp)
 				helpScrollDown();
 			}
 		}
+#if defined __EMSCRIPTEN__ || defined _WIN32
+		else if (ui.bt2FindShown)
+		{
+			findScreenWheel(directionUp); // BerntTracker: the Find screen's list
+		}
+#endif
 		else if (ui.diskOpShown)
 		{
 			// disk op - 3x speed
@@ -540,7 +551,7 @@ void mouseWheelHandler(bool directionUp)
 		}
 
 		if (!ui.aboutScreenShown  && !ui.helpScreenShown &&
-			!ui.configScreenShown && !ui.nibblesShown)
+			!ui.configScreenShown && !ui.nibblesShown && !ui.bt2FindShown)
 		{
 			if (mouse.x >= 421 && mouse.y <= 173)
 			{
@@ -772,6 +783,9 @@ void mouseButtonDownHandler(uint8_t mouseButton)
 	if (testInstrVolEnvMouseDown(mouseButtonHeldDown)) return;
 	if (testInstrPanEnvMouseDown(mouseButtonHeldDown)) return;
 	if (testDiskOpMouseDown(mouseButtonHeldDown)) return;
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	if (findScreenMouseDown()) return; // BerntTracker: the Find screen's list
+#endif
 	if (testPianoKeysMouseDown(mouseButtonHeldDown)) return;
 	if (testSamplerDataMouseDown()) return;
 	if (testPatternDataMouseDown()) return;
@@ -939,14 +953,6 @@ void readMouseXY(void)
 	// multiply coords by video upscaling factors
 	mouse.x = (int32_t)floor(mx * video.dMouseXMul);
 	mouse.y = (int32_t)floor(my * video.dMouseYMul);
-
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-	if (bt2SearchIsOpen())
-	{
-		hideSprite(SPRITE_MOUSE_POINTER); // BerntTracker: the search window shows Windows' own pointer
-		return;
-	}
-#endif
 
 	if ((config.specialFlags2 & HARDWARE_MOUSE) || tkMouseIsOverKeyboard()) // BerntTracker: no FT2 pointer over the keyboard
 	{

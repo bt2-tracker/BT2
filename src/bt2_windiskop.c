@@ -337,6 +337,20 @@ bool bt2ModlandOpen(void)
 	return bt2FsMkdirs(bt2ModlandGetSetup()->mirrorRoot);
 }
 
+void bt2DiskOpToast(const char *text)
+{
+	bt2Toast(text);
+}
+
+void bt2FindShownChanged(bool shown)
+{
+	(void)shown; // (the Windows program types into FT2's search box itself)
+}
+
+void bt2FindCleared(void)
+{
+}
+
 // ------------------------------------------------------------------------------------------------
 // Modland: a song is downloaded the first time it is opened
 

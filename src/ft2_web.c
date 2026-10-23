@@ -36,11 +36,13 @@
 #include "mixer/ft2_mix.h"
 #include "ft2_touchkeys.h"
 #include "ft2_mouse.h"
+#include "ft2_textboxes.h"
 #include "bt2_fs.h"
 #include "bt2_modland.h"
 #include "bt2_search.h"
 #include "bt2_import.h"
 #include "bt2_unzip.h"
+#include "bt2_find.h"
 
 void webScopesTick(int32_t updates); // ft2_scopes.c
 void webDiskOpStorePathsInConfig(void); // ft2_diskop.c
@@ -1096,162 +1098,66 @@ bool bt2PrepareDroppedFile(const char *path)
 }
 
 // ------------------------------------------------------------------------------------------------
-// the search window: the page shows it (the iPad's keyboard needs a real text box), the program finds
-// (bt2_search.c, the same as in the Windows program)
+// "Find" (Disk Op.'s button, Ctrl+F): FT2's own Find screen (bt2_find.c, the same as in the Windows program).
+// The page gives it a real text box, hidden (the iPad's own keyboard needs one): what is typed there is sent here,
+// and the program draws it in FT2's search box. Everything is done in the main loop.
 
-// "Find": the page's search window. (The page also opens it right in the tap/click, so the iPad keyboard can come up.)
-EM_JS(void, bt2_searchOpen, (void), { if (globalThis.BT2 && globalThis.BT2.search) globalThis.BT2.search.open(); });
+static bool pendingFind;
 
-void bt2SearchOpen(void)
+EMSCRIPTEN_KEEPALIVE void webFindOpen(void) // the page (Ctrl+F / Cmd+F)
 {
-	bt2_searchOpen();
+	pendingFind = true;
+}
+
+EMSCRIPTEN_KEEPALIVE void webFindSetQuery(const char *utf8) // the page's text box (what is typed)
+{
+	findScreenSetQuery((utf8 != NULL) ? utf8 : "");
+}
+
+EMSCRIPTEN_KEEPALIVE void webFindKey(int32_t key, int32_t shift) // Up/Down/PgUp/PgDn/Home/End/Enter/Esc from the page's text box
+{
+	findScreenQueueKey((SDL_Keycode)key, shift != 0);
+}
+
+EMSCRIPTEN_KEEPALIVE const char *webFindQuery(void) // (UTF-8, for the page's text box)
+{
+	return findScreenQuery();
+}
+
+EMSCRIPTEN_KEEPALIVE int32_t webFindIsShown(void)
+{
+	return ui.bt2FindShown ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE const char *webFindState(void) // (for the automatic tests: what the Find screen shows, JSON)
+{
+	return findScreenStateJson();
+}
+
+EM_JS(void, bt2_findShown, (int32_t shown), {
+	if (globalThis.BT2 && globalThis.BT2.find) globalThis.BT2.find.shownChanged(shown);
+});
+
+EM_JS(void, bt2_findCleared, (void), {
+	if (globalThis.BT2 && globalThis.BT2.find) globalThis.BT2.find.cleared();
+});
+
+void bt2FindShownChanged(bool shown) // (bt2_find.c)
+{
+	bt2_findShown(shown ? 1 : 0);
+}
+
+void bt2FindCleared(void) // (bt2_find.c: "Clear")
+{
+	bt2_findCleared();
+}
+
+void bt2DiskOpToast(const char *text)
+{
+	bt2_toast(text);
 }
 
 EMSCRIPTEN_KEEPALIVE void webDiskOpShowFolder(const char *path, int32_t item); // (below)
-
-static bt2SearchPool ownPool, modPool;
-static bool modPoolReady;
-static bt2SearchItem **results;
-static int32_t numResults;
-static char *resultsJson;
-
-// the search window was opened: the user's own files as they are now
-EMSCRIPTEN_KEEPALIVE void webSearchOpen(void)
-{
-	free(results); // (the last results point into the old list)
-	results = NULL;
-	numResults = 0;
-	bt2SearchBuildOwn(&ownPool, WEB_USER_ROOT);
-}
-
-// Modland's list is there: its songs and folders are searched too. 0 = not yet.
-EMSCRIPTEN_KEEPALIVE int32_t webSearchModland(void)
-{
-	if (!modPoolReady && bt2ModlandIsLoaded())
-	{
-		bt2SearchBuildModland(&modPool);
-		modPoolReady = true;
-	}
-
-	return modPoolReady ? 1 : 0;
-}
-
-// where: 0 all, 1 own files, 2 Modland. what: 0 all, 1 songs, 2 folders, 3 instruments/samples. Returns the number of hits.
-EMSCRIPTEN_KEEPALIVE int32_t webSearchRun(const char *query, int32_t where, int32_t what)
-{
-	free(results);
-	results = NULL;
-	numResults = bt2SearchRun((query != NULL) ? query : "", where, what, &ownPool, modPoolReady ? &modPool : NULL, &results);
-	return numResults;
-}
-
-static bool jsonAdd(char **buf, size_t *len, size_t *cap, const char *text, size_t n)
-{
-	if (*len + n + 1 > *cap)
-	{
-		size_t c = (*cap > 0) ? *cap : 65536;
-		while (c < *len + n + 1)
-			c *= 2;
-
-		char *bigger = (char *)realloc(*buf, c);
-		if (bigger == NULL)
-			return false;
-		*buf = bigger;
-		*cap = c;
-	}
-
-	memcpy(*buf + *len, text, n);
-	*len += n;
-	(*buf)[*len] = '\0';
-	return true;
-}
-
-static bool jsonString(char **buf, size_t *len, size_t *cap, const char *s)
-{
-	if (!jsonAdd(buf, len, cap, "\"", 1))
-		return false;
-
-	for (const uint8_t *p = (const uint8_t *)s; *p != '\0'; p++)
-	{
-		char e[8];
-		size_t n = 0;
-		if (*p == '"' || *p == '\\')
-		{
-			e[0] = '\\';
-			e[1] = (char)*p;
-			n = 2;
-		}
-		else if (*p < 0x20)
-		{
-			n = (size_t)snprintf(e, sizeof (e), "\\u%04x", (unsigned)*p);
-		}
-		else
-		{
-			e[0] = (char)*p;
-			n = 1;
-		}
-
-		if (!jsonAdd(buf, len, cap, e, n))
-			return false;
-	}
-
-	return jsonAdd(buf, len, cap, "\"", 1);
-}
-
-// hits [from, from + count) for the page: [{"r": path, "k": kind, "m": Modland, "z": size, "c": songs in a folder}]
-EMSCRIPTEN_KEEPALIVE const char *webSearchResults(int32_t from, int32_t count)
-{
-	free(resultsJson);
-	resultsJson = NULL;
-
-	size_t len = 0, cap = 0;
-	bool ok = jsonAdd(&resultsJson, &len, &cap, "[", 1);
-	for (int32_t i = from; ok && i >= 0 && i < numResults && i < from + count; i++)
-	{
-		const bt2SearchItem *it = results[i];
-		char nums[96];
-		ok = jsonAdd(&resultsJson, &len, &cap, (i > from) ? ",{\"r\":" : "{\"r\":", (i > from) ? 6 : 5) &&
-			jsonString(&resultsJson, &len, &cap, it->rel);
-		if (ok)
-		{
-			const int32_t n = snprintf(nums, sizeof (nums), ",\"k\":%d,\"m\":%d,\"z\":%lld,\"c\":%d}", (int)it->kind,
-				it->modland ? 1 : 0, (long long)it->size, (int)it->count);
-			ok = jsonAdd(&resultsJson, &len, &cap, nums, (size_t)n);
-		}
-	}
-
-	if (!ok || !jsonAdd(&resultsJson, &len, &cap, "]", 1))
-	{
-		free(resultsJson);
-		resultsJson = strdup("[]");
-	}
-
-	return (resultsJson != NULL) ? resultsJson : "[]";
-}
-
-// a hit was chosen: a song, instrument or sample is opened (Modland's are downloaded first), a folder is shown in Disk Op.
-// showFolder: the hit's folder instead. 0 = it wasn't found.
-EMSCRIPTEN_KEEPALIVE int32_t webSearchAct(int32_t index, int32_t showFolder, int32_t what)
-{
-	if (index < 0 || index >= numResults)
-		return 0;
-
-	const bt2SearchItem *it = results[index];
-	char folder[PATH_MAX], file[PATH_MAX];
-	int32_t item = BT2_ITEM_MODULE;
-	if (!bt2SearchTarget(it, what, WEB_USER_ROOT, folder, sizeof (folder), file, sizeof (file), &item))
-	{
-		bt2_toast("Fant ikke mappa");
-		return 0;
-	}
-
-	if (it->kind == BT2_KIND_FOLDER || showFolder)
-		webDiskOpShowFolder(folder, item);
-	else
-		webLoadFile(file); // (like a dropped file)
-
-	return 1;
-}
 
 // ------------------------------------------------------------------------------------------------
 // Imp. and dropped files: the page gives the files, bt2_import.c decides (the same as in the Windows program).
@@ -1499,7 +1405,9 @@ static void saveSettingsIfChanged(void)
 	webDiskOpStorePathsInConfig();
 	config.specialFlags2 |= HARDWARE_MOUSE;
 
-	if (memcmp(&lastSavedConfig, &config, sizeof (config_t)) != 0 && !editor.editTextFlag)
+	// (not while a text that may be a setting is typed; Find's search box is not one)
+	const bool typingSetting = editor.editTextFlag && !(ui.bt2FindShown && mouse.lastEditBox == TB_FIND_QUERY);
+	if (memcmp(&lastSavedConfig, &config, sizeof (config_t)) != 0 && !typingSetting)
 	{
 		saveConfig(CONFIG_HIDE_ERRORS);
 		memcpy(&lastSavedConfig, &config, sizeof (config_t));
@@ -1513,16 +1421,7 @@ EMSCRIPTEN_KEEPALIVE void webSaveSettingsNow(void)
 		saveSettingsIfChanged();
 }
 
-// FT2's colours for the page's own windows (the search window looks like the rest of the program)
-EMSCRIPTEN_KEEPALIVE int32_t webPaletteRGB(int32_t index)
-{
-	if (index < 0 || index >= PAL_NUM)
-		return 0;
-
-	return (int32_t)(video.palette[index] & 0xFFFFFF);
-}
-
-// the search window: "show this folder in Disk Op." (done in the main loop, see webHandlePageRequests)
+// "show this folder in Disk Op." (for the automatic tests; done in the main loop, see webHandlePageRequests)
 static char pendingFolder[PATH_MAX];
 static int32_t pendingFolderItem = -1;
 
@@ -1534,6 +1433,12 @@ EMSCRIPTEN_KEEPALIVE void webDiskOpShowFolder(const char *path, int32_t item)
 
 void webHandlePageRequests(void)
 {
+	if (pendingFind && !ui.sysReqShown)
+	{
+		pendingFind = false;
+		bt2SearchOpen();
+	}
+
 	if (pendingFolder[0] == '\0' || ui.sysReqShown)
 		return;
 

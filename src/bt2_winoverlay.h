@@ -4,7 +4,6 @@
 **
 ** - the message at the top (#toast in index.html): for 2.6 seconds, fades in and out
 ** - the box at the bottom while something is downloaded (#net): a text and a progress bar
-** - the search window (bt2_winsearch.c)
 **
 ** Text is UTF-8. Sizes are the web page's CSS sizes times Windows' display zoom.
 */

@@ -95,7 +95,7 @@ bool bt2ModlandStoreSong(const bt2ModlandSong *song, const uint8_t *data, size_t
 void bt2ModlandStoredMessage(const bt2ModlandSong *song, char *msg, size_t msgLen); // "Fra Modland: trykk Save for å beholde den"
 size_t bt2ModlandMaxSongSize(void);
 
-// ---- all songs (for the search window)
+// ---- all songs (for the Find screen)
 int32_t bt2ModlandFileCount(void);
 const char *bt2ModlandFilePath(int32_t i, size_t *len); // "Artist/song.xm" (not 0-terminated: *len bytes)
 int64_t bt2ModlandFileSize(int32_t i);

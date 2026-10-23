@@ -44,7 +44,6 @@
 #include "bt2_winupdate.h"
 #include "bt2_winhome.h"
 #include "bt2_windiskop.h"
-#include "bt2_winsearch.h"
 #include "bt2_winoverlay.h"
 #endif
 
@@ -397,7 +396,6 @@ static void cleanUpAndExit(void) // never call this inside the main loop!
 	bt2UpdateShutdown(); // BerntTracker (Windows)
 	bt2HomeShutdown();
 	bt2DiskOpShutdown();
-	bt2SearchFree();
 	bt2OverlayFree();
 #endif
 

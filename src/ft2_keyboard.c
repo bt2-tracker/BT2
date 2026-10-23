@@ -27,6 +27,8 @@
 #include "ft2_midi.h"
 #include "ft2_structs.h"
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
+#include "bt2_find.h" // BerntTracker: the Find screen
+#include "bt2_diskop.h"
 
 keyb_t keyb; // globalized
 
@@ -143,6 +145,12 @@ void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepea
 
 	if (scancode != SDL_SCANCODE_ESCAPE)
 		keyb.keyRepeat = true;
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// BerntTracker: the Find screen's keys (arrows, Enter, Esc ...); the rest goes to its search box
+	if (ui.bt2FindShown && findScreenKeyDown(keycode))
+		return;
+#endif
 
 	// handle certain keys (home/end/left/right etc) when editing text
 	if (editor.editTextFlag)
@@ -367,7 +375,7 @@ static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 
 			if (!ui.nibblesShown     && !ui.configScreenShown &&
 				!ui.aboutScreenShown && !ui.diskOpShown       &&
-				!ui.helpScreenShown  && !ui.extendedPatternEditor)
+				!ui.helpScreenShown  && !ui.extendedPatternEditor && !ui.bt2FindShown)
 			{
 				drawIDAdd();
 			}
@@ -908,6 +916,9 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 				if (ui.aboutScreenShown)  hideAboutScreen();
 				if (ui.configScreenShown) hideConfigScreen();
 				if (ui.helpScreenShown)   hideHelpScreen();
+#if defined __EMSCRIPTEN__ || defined _WIN32
+				if (ui.bt2FindShown)      hideFindScreen(); // BerntTracker
+#endif
 				if (ui.nibblesShown)      hideNibblesScreen();
 
 				showSampleEditorExt();
@@ -938,6 +949,13 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 					showTopScreen(DONT_RESTORE_SCREENS);
 				}
 			}
+#if defined __EMSCRIPTEN__ || defined _WIN32
+			else if (keyb.leftCtrlPressed)
+			{
+				bt2SearchOpen(); // BerntTracker: Ctrl+F opens the Find screen (FT2 itself had nothing on it)
+				return true;
+			}
+#endif
 			else if (keyb.leftAltPressed)
 			{
 				jumpToChannel(11);
@@ -1018,6 +1036,9 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 				if (ui.aboutScreenShown)  hideAboutScreen();
 				if (ui.configScreenShown) hideConfigScreen();
 				if (ui.helpScreenShown)   hideHelpScreen();
+#if defined __EMSCRIPTEN__ || defined _WIN32
+				if (ui.bt2FindShown)      hideFindScreen(); // BerntTracker
+#endif
 				if (ui.nibblesShown)      hideNibblesScreen();
 
 				showInstEditorExt();
@@ -1201,6 +1222,9 @@ static bool checkModifiedKeys(SDL_Keycode keycode)
 				if (ui.aboutScreenShown)     hideAboutScreen();
 				if (ui.configScreenShown)    hideConfigScreen();
 				if (ui.helpScreenShown)      hideHelpScreen();
+#if defined __EMSCRIPTEN__ || defined _WIN32
+				if (ui.bt2FindShown)         hideFindScreen(); // BerntTracker
+#endif
 				if (ui.nibblesShown)         hideNibblesScreen();
 				if (ui.diskOpShown)          hideDiskOpScreen();
 				if (ui.advEditShown)         hideAdvEdit();

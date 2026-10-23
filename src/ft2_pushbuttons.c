@@ -31,6 +31,7 @@
 #include "ft2_palette.h"
 #include "ft2_structs.h"
 #include "ft2_bmp.h"
+#include "bt2_find.h"
 
 #define BUTTON_GFX_BMP_WIDTH 90
 
@@ -409,7 +410,18 @@ pushButton_t pushButtons[NUM_PUSHBUTTONS] =
 	{ 138, 142, 18, 13, 1, 4, ARROW_UP_STRING,   NULL,    pbWavSongStartUp,   NULL },
 	{ 155, 142, 18, 13, 1, 4, ARROW_DOWN_STRING, NULL,    pbWavSongStartDown, NULL },
 	{ 253, 142, 18, 13, 1, 4, ARROW_UP_STRING,   NULL,    pbWavSongEndUp,     NULL },
-	{ 270, 142, 18, 13, 1, 4, ARROW_DOWN_STRING, NULL,    pbWavSongEndDown,   NULL }
+	{ 270, 142, 18, 13, 1, 4, ARROW_DOWN_STRING, NULL,    pbWavSongEndDown,   NULL },
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// ------ BERNTTRACKER: FIND SCREEN PUSHBUTTONS (bt2_find.c) ------
+	//x,   y,   w,  h,  p, d, text #1,           text #2, funcOnDown,         funcOnUp
+	{   3, 133, 59, 17, 0, 0, "Open",            NULL,    NULL,               pbFindOpen },
+	{  65, 133, 60, 17, 0, 0, "Folder",          NULL,    NULL,               pbFindFolder },
+	{   3, 153, 59, 17, 0, 0, "Clear",           NULL,    NULL,               pbFindClear },
+	{  65, 153, 60, 17, 0, 0, "Exit",            NULL,    NULL,               exitFindScreen },
+	{ 611,  18, 18, 13, 1, 3, ARROW_UP_STRING,   NULL,    pbFindListUp,       NULL },
+	{ 611, 144, 18, 13, 1, 3, ARROW_DOWN_STRING, NULL,    pbFindListDown,     NULL },
+#endif
 };
 
 static uint32_t tmpCounter;

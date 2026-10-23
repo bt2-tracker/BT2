@@ -26,6 +26,7 @@
 #include "ft2_video.h"
 #include "ft2_structs.h"
 #include "ft2_sysreqs.h"
+#include "bt2_find.h" // BerntTracker: the Find screen
 
 bool detectBEM(FILE *f);
 bool loadBEM(FILE *f, uint32_t filesize);
@@ -513,6 +514,12 @@ static void setupLoadedModule(void)
 		togglePatternEditorExtended(); // exit
 		togglePatternEditorExtended(); // re-enter (force redrawing)
 	}
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	else if (ui.bt2FindShown)
+	{
+		redrawFindScreen(); // BerntTracker: the Find screen stays (e.g. a song dropped on the window while it is shown)
+	}
+#endif
 	else
 	{
 		// redraw top screen

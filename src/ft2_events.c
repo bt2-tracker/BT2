@@ -37,9 +37,6 @@
 #include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
 #include "ft2_asio.h" // BerntTracker (Windows): ASIO
 #include "bt2_diskop.h" // BerntTracker: Disk Op. like on the iPad (Modland)
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-#include "bt2_winsearch.h" // BerntTracker (Windows): the search window
-#endif
 
 #define CRASH_TEXT "Oh no! The Fasttracker II clone has crashed...\nA backup of the song was hopefully " \
                    "saved to the current module directory.\n\nPlease report this bug if you can.\n" \
@@ -79,11 +76,8 @@ void handleThreadEvents(void)
 
 void handleEvents(void)
 {
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-	bt2SearchUpdate(); // BerntTracker (Windows): the search window searches after typing
-#endif
 #ifdef __EMSCRIPTEN__
-	webHandlePageRequests(); // BerntTracker (web): e.g. "show this folder" from the search window
+	webHandlePageRequests(); // BerntTracker (web): requests from the page (e.g. Ctrl+F: the Find screen)
 #endif
 
 #ifdef _WIN32
@@ -414,11 +408,6 @@ static void handleSDLEvents(void)
 	{
 		handleWaitVblQuirk(&event);
 
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-		if (bt2SearchHandleEvent(&event))
-			continue; // BerntTracker: the search window has the keyboard and the mouse while it is open
-#endif
-
 		if (editor.busy)
 		{
 			const uint32_t eventType = event.type;
@@ -504,7 +493,7 @@ static void handleSDLEvents(void)
 			}
 
 #ifdef BT2_DISKOP
-			if (bt2PrepareDroppedFile(event.drop.file)) // BerntTracker: Modland songs (search window) are downloaded first
+			if (bt2PrepareDroppedFile(event.drop.file)) // BerntTracker: Modland songs (Find, Disk Op.) are downloaded first
 #endif
 			loadDroppedFile(event.drop.file);
 			SDL_free(event.drop.file);
@@ -546,10 +535,6 @@ static void handleSDLEvents(void)
 		}
 		else if (event.type == SDL_KEYDOWN)
 		{
-#if defined _WIN32 && !defined __EMSCRIPTEN__
-			if (bt2SearchShortcut(&event))
-				continue; // BerntTracker: Ctrl+F opens the search window
-#endif
 #ifdef __EMSCRIPTEN__
 			event.key.keysym.sym = webFixKeycode(event.key.keysym.scancode, event.key.keysym.sym);
 			setKeyModifiers((SDL_Keymod)event.key.keysym.mod); // modifiers as they were when this key was pressed

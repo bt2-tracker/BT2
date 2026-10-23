@@ -620,6 +620,7 @@ void patternEditorExtended(void)
 	ui._advEditShown= ui.advEditShown;
 	ui._wavRendererShown = ui.wavRendererShown;
 	ui._trimScreenShown = ui.trimScreenShown;
+	ui._bt2FindShown = ui.bt2FindShown; // BerntTracker
 
 	hideTopScreen();
 	hideSampleEditor();
@@ -711,6 +712,7 @@ void exitPatternEditorExtended(void)
 	ui.advEditShown = ui._advEditShown;
 	ui.wavRendererShown = ui._wavRendererShown;
 	ui.trimScreenShown = ui.trimScreenShown;
+	ui.bt2FindShown = ui._bt2FindShown; // BerntTracker
 
 	showTopScreen(RESTORE_SCREENS);
 	showBottomScreen();
@@ -2252,7 +2254,7 @@ void updateInstrumentSwitcher(void)
 {
 	int16_t y;
 
-	if (ui.aboutScreenShown || ui.configScreenShown || ui.helpScreenShown || ui.nibblesShown)
+	if (ui.aboutScreenShown || ui.configScreenShown || ui.helpScreenShown || ui.nibblesShown || ui.bt2FindShown)
 		return; // don't redraw instrument switcher when it's not shown!
 
 	if (ui.extendedPatternEditor) // extended pattern editor

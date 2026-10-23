@@ -60,7 +60,13 @@ textBox_t textBoxes[NUM_TEXTBOXES] =
 	{ 486,   31, 143,  12, 2, 1, 80,         false, true },
 	{ 486,   46, 143,  12, 2, 1, 80,         false, true },
 	{ 486,   61, 143,  12, 2, 1, 80,         false, true },
-	{ 486,   76, 143,  12, 2, 1, 80,         false, true }
+	{ 486,   76, 143,  12, 2, 1, 80,         false, true },
+
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	// ------ BERNTTRACKER: FIND SCREEN TEXTBOX (bt2_find.c) ------
+	// x,   y,   w,   h,  tx,ty, maxc,       rmb,   cmc
+	{ 165,   3, 463,  12, 2, 1, 100,        false, true },
+#endif
 };
 
 static int16_t markX1, markX2;

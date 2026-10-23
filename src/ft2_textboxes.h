@@ -33,6 +33,10 @@ enum // TEXTBOXES
 	TB_CONF_DEF_PATTS_DIR,
 	TB_CONF_DEF_TRACKS_DIR,
 
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	TB_FIND_QUERY, // BerntTracker: the Find screen's search box (bt2_find.c)
+#endif
+
 	NUM_TEXTBOXES
 };
 

@@ -2787,7 +2787,7 @@ void pbDiskOpModland(void)
 	openDirectory((UNICHAR *)bt2ModlandRootU());
 }
 
-// "Find": the search window (songs and folders, in the user's own files and in Modland)
+// "Find": the Find screen (songs and folders, in the user's own files and in Modland; bt2_find.c)
 void pbDiskOpFind(void)
 {
 	bt2SearchOpen();

@@ -1,4 +1,4 @@
-/* BerntTracker (Windows): the message, the download box and the search window on top of FT2's screen.
+/* BerntTracker (Windows): the message and the download box on top of FT2's screen.
 ** See bt2_winoverlay.h.
 */
 
@@ -19,7 +19,6 @@
 #include "ft2_touchkeys.h"
 #include "bt2_winui.h"
 #include "bt2_winoverlay.h"
-#include "bt2_winsearch.h"
 
 // the web page's colours (index.html)
 #define C_BOX     0xFF12161A
@@ -308,7 +307,6 @@ void bt2OverlayRender(SDL_Renderer *r)
 
 	const uint64_t now = GetTickCount64();
 
-	bt2SearchRender(r, outW, outH); // (when it is open)
 	drawToast(r, outW, now);
 	drawNetBox(r, outW, outH, now);
 }

@@ -22,6 +22,7 @@
 #include "ft2_tables.h"
 #include "ft2_bmp.h"
 #include "ft2_structs.h"
+#include "bt2_find.h" // BerntTracker: the Find screen
 
 static void releaseMouseStates(void)
 {
@@ -1230,6 +1231,10 @@ void hideTopScreen(void)
 	hideConfigScreen();
 	hideAboutScreen();
 	hideHelpScreen();
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	if (ui.bt2FindShown)
+		hideFindScreen(); // BerntTracker
+#endif
 
 	ui.instrSwitcherShown = false;
 	ui.scopesShown = false;
@@ -1255,6 +1260,12 @@ void showTopScreen(bool restoreScreens)
 	{
 		showNibblesScreen();
 	}
+#if defined __EMSCRIPTEN__ || defined _WIN32
+	else if (ui.bt2FindShown)
+	{
+		redrawFindScreen(); // BerntTracker
+	}
+#endif
 	else
 	{
 		showTopLeftMainScreen(restoreScreens); // updates ui.scopesShown

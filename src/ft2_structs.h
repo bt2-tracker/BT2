@@ -45,6 +45,7 @@ typedef struct ui_t
 	bool instrSwitcherShown, aboutScreenShown, helpScreenShown, configScreenShown;
 	bool scopesShown, diskOpShown, nibblesShown, transposeShown, instEditorExtShown;
 	bool sampleEditorExtShown, advEditShown, wavRendererShown, trimScreenShown;
+	bool bt2FindShown; // BerntTracker: the Find screen (bt2_find.c)
 	bool drawBPMFlag, drawSpeedFlag, drawGlobVolFlag, drawPosEdFlag, drawPattNumLenFlag;
 	bool updatePosSections, updatePosEdScrollBar;
 	uint8_t oldTopLeftScreen;
@@ -62,6 +63,7 @@ typedef struct ui_t
 	bool _nibblesShown, _transposeShown, _instEditorShown;
 	bool _instEditorExtShown, _sampleEditorExtShown, _sampleEditorEffectsShown, _patternEditorShown;
 	bool _sampleEditorShown, _advEditShown, _wavRendererShown, _trimScreenShown;
+	bool _bt2FindShown; // BerntTracker
 	// -------------------------------------------------------------------------
 } ui_t;
 

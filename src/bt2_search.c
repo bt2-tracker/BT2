@@ -1,4 +1,4 @@
-/* BerntTracker: what the search window finds. See bt2_search.h. */
+/* BerntTracker: what the Find screen finds (bt2_find.c). See bt2_search.h. */
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,7 +1,7 @@
 #pragma once
 
 /* BerntTracker (Windows): a small drawing kit for the screens that look like the web version
-** (the start screen now, the search window later). It draws into plain pixel buffers that are
+** (the start screen). It draws into plain pixel buffers that are
 ** shown with SDL: shapes with smooth edges, pictures (PNG), and text with Windows' own fonts
 ** (Segoe UI, the same font Chrome uses for the web version on Windows).
 **

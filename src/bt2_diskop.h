@@ -20,7 +20,7 @@
 #define BT2_DISKOP 1
 
 bool bt2PrepareFile(const UNICHAR *pathU);        // before a file is opened: a Modland song is downloaded first (false = failed)
-bool bt2PrepareDroppedFile(const char *pathUtf8); // the same, for a file opened from the search window (or dropped)
+bool bt2PrepareDroppedFile(const char *pathUtf8); // the same, for a file opened from the Find screen (or dropped)
 bool bt2DiskOpReadOnlyHere(void);                 // true in Modland's folders
 bool bt2DiskOpPrepareSaveDir(bool showFolder);    // before saving: never into Modland (then BT2/Modland/..., and says so).
                                                   // showFolder: Disk Op. then shows the folder the file goes to
@@ -29,7 +29,10 @@ void bt2DiskOpBeforeList(const UNICHAR *dirU);    // (in the thread that lists t
 bool bt2ModlandOpen(void);                        // the list of songs (the first time from modland.com); false = not there
 const UNICHAR *bt2ModlandRootU(void);             // Modland's top folder
 const UNICHAR *bt2HomeRootU(void);                // the BT2 folder
-void bt2SearchOpen(void);                         // the search window ("Find", Ctrl+F)
+void bt2SearchOpen(void);                         // "Find" and Ctrl+F: the Find screen (bt2_find.c)
+void bt2DiskOpToast(const char *text);            // a short message (UTF-8) over FT2's screen
+void bt2FindShownChanged(bool shown);             // the Find screen came or went (the web page gives it its text box)
+void bt2FindCleared(void);                        // the Find screen's "Clear" (the web page empties its text box)
 
 #if defined _WIN32 && !defined __EMSCRIPTEN__
 bool bt2DiskOpGoParentTop(void); // "../" at the top of the BT2 folder or Modland (true = done here)
