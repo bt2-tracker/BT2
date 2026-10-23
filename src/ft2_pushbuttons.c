@@ -391,7 +391,7 @@ pushButton_t pushButtons[NUM_PUSHBUTTONS] =
 	{ 134,  16, 31, 12, 0, 0, "BT2",               NULL,    NULL,             pbDiskOpRoot },
 	{ 134,  33, 31, 22, 0, 0, "Imp.",              NULL,    NULL,             pbDiskOpImport },
 	{ 134,  57, 31, 22, 0, 0, "Exp.",              NULL,    NULL,             pbDiskOpExport },
-	{ 134,  81, 31, 27, 0, 0, "Mod-",              "land",  NULL,             pbDiskOpModland }, // (two lines need 27, like "Swap Bank")
+	{ 134,  81, 31, 27, 0, 0, "Mod",               "land",  NULL,             pbDiskOpModland }, // (two lines need 27, like "Swap Bank"; "Mod-" was too wide)
 	{ 134, 110, 31, 22, 0, 0, "Find",              NULL,    NULL,             pbDiskOpFind },
 #else
 	{ 134,  16, 31, 12, 0, 0, "/",                 NULL,    NULL,             pbDiskOpRoot },
