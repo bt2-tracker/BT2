@@ -85,8 +85,8 @@ pushButton_t pushButtons[NUM_PUSHBUTTONS] =
 
 	// ------ LOGO PUSHBUTTON ------
 	//x,   y, w,   h,  p, d, text #1, text #2, funcOnDown, funcOnUp
-	{ 112, 0, 154, 32, 0, 0, NULL,    NULL,    NULL,       pbToggleLogo  },
-	{ 266, 0,  25, 32, 0, 0, NULL,    NULL,    NULL,       pbToggleBadge },
+	{ 112, 0, 150, 32, 0, 0, NULL,    NULL,    NULL,       pbToggleLogo  }, // BT2: 150 = BERNT_LOGO_W
+	{ 262, 0,  29, 32, 0, 0, NULL,    NULL,    NULL,       pbToggleBadge }, // BT2: 29 = BERNT_BADGE_W
 
 	// ------ MAIN SCREEN PUSHBUTTONS ------
 	//x,   y,   w,  h,  p, d, text #1,      text #2, funcOnDown, funcOnUp

@@ -40,12 +40,11 @@ typedef struct
 	vector_t x, y, z;
 } matrix_t;
 
-static char *customText0 = "Original FT2 by Magnus \"Vogue\" H\224gdahl & Fredrik \"Mr.H\" Huss";
-static char *customText1 = "Clone by Olav \"8bitbubsy\" S\233rensen";
-static char *customText2 = "https://16-bits.org";
+static char *customText0 = "Original Bagdad Tracker by Saddam Hussein.";
+static char *customText1 = "Clone by The Whole King Random";
 static char customText3[128];
 static int16_t customText0X, customText0Y, customText1X, customText1Y;
-static int16_t customText2X, customText2Y, customText3X, customText3Y;
+static int16_t customText3X, customText3Y;
 static int32_t lastStarPos[NUM_STARS];
 static const uint16_t starShineAlpha16 = (65535 * STARSHINE_ALPHA_PERCENTAGE) / 100;
 static vector_t starPoints[NUM_STARS];
@@ -238,7 +237,6 @@ void showAboutScreen(void) // called once when about screen is opened
 	// render static texts
 	textOut(customText0X, customText0Y, PAL_FORGRND, customText0);
 	textOut(customText1X, customText1Y, PAL_FORGRND, customText1);
-	textOut(customText2X, customText2Y, PAL_FORGRND, customText2);
 	textOut(customText3X, customText3Y, PAL_FORGRND, customText3);
 
 	showPushButton(PB_EXIT_ABOUT);
@@ -262,11 +260,9 @@ void initAboutScreen(void)
 #endif
 	customText0X = (SCREEN_W    - textWidth(customText0)) / 2;
 	customText1X = (SCREEN_W    - textWidth(customText1)) / 2;
-	customText2X = (SCREEN_W-8) - textWidth(customText2);
 	customText3X = (SCREEN_W-8) - textWidth(customText3);
 	customText0Y = 157-34;
 	customText1Y = 157-12;
-	customText2Y = 157-12;
 	customText3Y = 157;
 }
 

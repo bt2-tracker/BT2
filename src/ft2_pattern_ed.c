@@ -2220,13 +2220,13 @@ void changeLogoType(uint8_t logoType)
 
 	if (logoType == 0)
 	{
-		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(154 * 32) * 0];
-		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(154 * 32) * 1];
+		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(BERNT_LOGO_W * 32) * 0];
+		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(BERNT_LOGO_W * 32) * 1];
 	}
 	else
 	{
-		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(154 * 32) * 2];
-		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(154 * 32) * 3];
+		pushButtons[PB_LOGO].bitmapUnpressed = &berntLogo[(BERNT_LOGO_W * 32) * 2];
+		pushButtons[PB_LOGO].bitmapPressed = &berntLogo[(BERNT_LOGO_W * 32) * 3];
 	}
 
 	drawPushButton(PB_LOGO);
@@ -2234,18 +2234,11 @@ void changeLogoType(uint8_t logoType)
 
 void changeBadgeType(uint8_t badgeType)
 {
-	pushButtons[PB_BADGE].bitmapFlag = true;
+	(void)badgeType; // BT2: boksen ser lik ut uansett (ogsaa naar man trykker paa den)
 
-	if (badgeType == 0)
-	{
-		pushButtons[PB_BADGE].bitmapUnpressed = &bmp.ft2ByBadges[(25 * 32) * 0];
-		pushButtons[PB_BADGE].bitmapPressed = &bmp.ft2ByBadges[(25 * 32) * 1];
-	}
-	else
-	{
-		pushButtons[PB_BADGE].bitmapUnpressed = &bmp.ft2ByBadges[(25 * 32) * 2];
-		pushButtons[PB_BADGE].bitmapPressed = &bmp.ft2ByBadges[(25 * 32) * 3];
-	}
+	pushButtons[PB_BADGE].bitmapFlag = true;
+	pushButtons[PB_BADGE].bitmapUnpressed = berntBadge;
+	pushButtons[PB_BADGE].bitmapPressed = berntBadge;
 
 	drawPushButton(PB_BADGE);
 }
