@@ -163,7 +163,7 @@ bool bt2DiskOpPrepareSaveDir(bool showFolder)
 		return true; // (anywhere else: saved where you are)
 	}
 
-	// Modland is read-only: the user's own copy of the folder (BT2/Modland/...), where songs opened from Modland are kept too
+	// Modland is read-only: the user's own folder for it instead (BT2/Modland/<the same folders>)
 	char dest[2048];
 	const bool haveDest = bt2ModlandOwnFolderFor(cwd, dest, sizeof (dest));
 	free(cwd);
@@ -345,7 +345,7 @@ typedef struct songJob_t
 	volatile int32_t cancel;
 	bt2ModlandSong song;
 	bt2NetResult res;
-	bool writeFailed, ownSaved;
+	bool writeFailed;
 } songJob;
 
 static void songProgress(void *ud, uint64_t got, uint64_t total)
@@ -363,7 +363,7 @@ static int32_t songJobRun(void *arg)
 	if (!bt2NetGet(j->song.url, bt2ModlandMaxSongSize(), &j->cancel, songProgress, j, &data, &len, &j->res))
 		return 0;
 
-	const bool ok = bt2ModlandStoreSong(&j->song, data, len, &j->ownSaved); // (the user's own copy, and Modland's folder)
+	const bool ok = bt2ModlandStoreSong(&j->song, data, len); // (in Modland's folder: not kept unless the user saves it)
 	free(data);
 
 	if (!ok)
@@ -442,7 +442,7 @@ bool bt2PrepareFile(const UNICHAR *pathU)
 		return false;
 	}
 
-	bt2ModlandStoredMessage(&j->song, j->ownSaved, msg, sizeof (msg));
+	bt2ModlandStoredMessage(&j->song, msg, sizeof (msg));
 	bt2Toast(msg);
 	free(j);
 	return true;

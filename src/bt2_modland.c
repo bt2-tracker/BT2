@@ -784,14 +784,26 @@ static void populateNode(int32_t node, const char *dir) // (with the lock held)
 	for (int32_t c = nodes[node].first; c >= 0; c = nodes[c].next)
 	{
 		nodeSafeName(c, safe, sizeof (safe));
-		if (nameSetHas(&there, safe))
-			continue; // (made before)
-
 		bt2PathJoin(path, sizeof (path), dir, safe);
-		if (nodes[c].dir)
-			bt2FsMkdir(path);
-		else
-			bt2FsCreateEmpty(path); // (never touches a file that is there: a song that was opened keeps its contents)
+
+		if (!nameSetHas(&there, safe))
+		{
+			if (nodes[c].dir)
+				bt2FsMkdir(path);
+			else
+				bt2FsCreateEmpty(path);
+		}
+		else if (!nodes[c].dir)
+		{
+			/* A Modland song that was opened in an earlier session (this is the first time the folder is opened in this
+			** one): forgotten, so it is downloaded again when it is opened. Only what the user saves is kept (Save saves
+			** in BT2/Modland), like in the web version, where these folders are in memory only. These files are the
+			** program's own: nothing else can be saved in Modland's folders.
+			*/
+			bt2FileInfo info;
+			if (bt2FsInfo(path, &info) && !info.isDir && info.size > 0)
+				bt2FsWriteReplace(path, "", 0);
+		}
 	}
 
 	nameSetFree(&there);
@@ -920,62 +932,10 @@ bool bt2ModlandOwnFolderFor(const char *mirrorDir, char *out, size_t outLen)
 // ------------------------------------------------------------------------------------------------
 // a song (the same in the Windows program and the web version)
 
-// "<ownRoot>/Artist/song.xm" -> "BT2/Modland/Artist/song.xm" (for messages)
-static void ownForMessage(const char *ownPath, char *out, size_t outLen)
+// what is shown when a Modland song is opened: it isn't kept unless the user saves it
+static void openedMessage(char *msg, size_t msgLen)
 {
-	const char *rel = bt2PathAfter(ownPath, setup.ownRoot);
-	if (rel == NULL)
-		rel = ownPath;
-
-	snprintf(out, outLen, "BT2/Modland%s%s", (rel[0] != '\0') ? "/" : "", rel);
-	for (char *p = out; *p != '\0'; p++)
-	{
-		if (*p == '\\')
-			*p = '/';
-	}
-}
-
-static void makeParentDirs(const char *path)
-{
-	char dir[2048];
-	snprintf(dir, sizeof (dir), "%s", path);
-
-	char *cut = NULL;
-	for (char *p = dir; *p != '\0'; p++)
-	{
-		if (isSepChar(*p))
-			cut = p;
-	}
-
-	if (cut != NULL)
-	{
-		*cut = '\0';
-		bt2FsMkdirs(dir);
-	}
-}
-
-// the user's own copy: a new file, or over an empty one (never over a file with anything in it)
-static bool writeOwnCopy(const char *ownPath, const uint8_t *data, size_t len)
-{
-	makeParentDirs(ownPath);
-
-	bt2FileInfo info;
-	if (bt2FsInfo(ownPath, &info))
-	{
-		if (info.isDir || info.size != 0)
-			return false;
-
-		return bt2FsWriteReplace(ownPath, data, len);
-	}
-
-	return bt2FsWriteNew(ownPath, data, len);
-}
-
-static void savedMessage(const char *ownPath, bool saved, char *msg, size_t msgLen)
-{
-	char rel[2200];
-	ownForMessage(ownPath, rel, sizeof (rel));
-	snprintf(msg, msgLen, saved ? "Lagret i %s" : "Kunne ikke lagre i %s", rel);
+	snprintf(msg, msgLen, "Fra Modland: trykk Save for \xC3\xA5 beholde den");
 }
 
 int32_t bt2ModlandPrepareSong(const char *file, bt2ModlandSong *song, char *msg, size_t msgLen)
@@ -993,44 +953,14 @@ int32_t bt2ModlandPrepareSong(const char *file, bt2ModlandSong *song, char *msg,
 	if (!bt2ModlandResolve(file, song->modlandPath, sizeof (song->modlandPath), song->ownPath, sizeof (song->ownPath)))
 		return BT2_SONG_NOT_MODLAND; // (not on the list: opened as it is)
 
-	// the user's own copy is there: it is what is opened (its contents in Modland's folder, which is only the program's copy)
-	bt2FileInfo own;
-	if (bt2FsInfo(song->ownPath, &own) && !own.isDir && own.size > 0)
-	{
-		size_t len = 0;
-		uint8_t *data = bt2FsReadAll(song->ownPath, &len, MAX_SONG_SIZE);
-		if (data == NULL)
-			return BT2_SONG_OPEN; // (too big to copy, or unreadable: Modland's folder as it is)
-
-		size_t curLen = 0;
-		uint8_t *cur = (info.size == (int64_t)len) ? bt2FsReadAll(file, &curLen, MAX_SONG_SIZE) : NULL;
-		const bool same = (cur != NULL && curLen == len && memcmp(cur, data, len) == 0);
-		free(cur);
-
-		const bool ok = same || bt2FsWriteReplace(file, data, len);
-		free(data);
-
-		if (!ok)
-		{
-			snprintf(msg, msgLen, "Kunne ikke \xC3\xA5pne filen");
-			return BT2_SONG_FAILED;
-		}
-
-		return BT2_SONG_OPEN;
-	}
-
-	// it came before (the user's copy has been deleted or moved since): a new copy of it
+	// it came earlier in this session: opened again as it is
 	if (info.size > 0)
 	{
-		size_t len = 0;
-		uint8_t *data = bt2FsReadAll(file, &len, MAX_SONG_SIZE);
-		if (data != NULL)
-			savedMessage(song->ownPath, writeOwnCopy(song->ownPath, data, len), msg, msgLen);
-		free(data);
+		openedMessage(msg, msgLen);
 		return BT2_SONG_OPEN;
 	}
 
-	// the first time: it is downloaded
+	// else it is downloaded
 	const char *name = strrchr(song->modlandPath, '/');
 	name = (name != NULL) ? name + 1 : song->modlandPath;
 	snprintf(song->label, sizeof (song->label), "Henter \xC2\xAB%.400s\xC2\xBB fra Modland", name);
@@ -1038,18 +968,15 @@ int32_t bt2ModlandPrepareSong(const char *file, bt2ModlandSong *song, char *msg,
 	return BT2_SONG_DOWNLOAD;
 }
 
-bool bt2ModlandStoreSong(const bt2ModlandSong *song, const uint8_t *data, size_t len, bool *ownSaved)
+bool bt2ModlandStoreSong(const bt2ModlandSong *song, const uint8_t *data, size_t len)
 {
-	// the user's own copy (kept, and used from then on - also without internet)
-	*ownSaved = writeOwnCopy(song->ownPath, data, len);
-
-	// and the song in Modland's folder (it was an empty file)
-	return bt2FsWriteReplace(song->file, data, len);
+	return bt2FsWriteReplace(song->file, data, len); // (in Modland's folder only: it was an empty file)
 }
 
-void bt2ModlandStoredMessage(const bt2ModlandSong *song, bool ownSaved, char *msg, size_t msgLen)
+void bt2ModlandStoredMessage(const bt2ModlandSong *song, char *msg, size_t msgLen)
 {
-	savedMessage(song->ownPath, ownSaved, msg, msgLen);
+	(void)song;
+	openedMessage(msg, msgLen);
 }
 
 size_t bt2ModlandMaxSongSize(void)

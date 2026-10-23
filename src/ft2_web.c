@@ -860,8 +860,8 @@ bool bt2DiskOpReadOnlyHere(void)
 }
 
 /* Only /home/web_user is stored in the browser. The Modland library (/Modland) is kept in memory,
-** so a file saved there would be gone after a restart. Save it in the user's own copy of that
-** folder instead (BT2/Modland/..., where songs opened from Modland are kept too), and say so.
+** so a file saved there would be gone after a restart. Save it in the user's own folder for it
+** instead (BT2/Modland/<the same folders>), and say so.
 */
 bool bt2DiskOpPrepareSaveDir(bool showFolder)
 {
@@ -1034,8 +1034,9 @@ EM_ASYNC_JS(uint8_t *, bt2_download, (const char *url, const char *label, int32_
 	return p;
 });
 
-/* Before FT2 opens a file: a song in Modland's folders (bt2ModlandPrepareSong: the user's own copy first, else it is
-** downloaded the first time and kept in BT2/Modland), and the page's Demo Tracks (downloaded when first opened).
+/* Before FT2 opens a file: a song in Modland's folders (bt2ModlandPrepareSong: downloaded into /Modland, which is in
+** memory only, so it is gone after this session unless the user saves it), and the page's Demo Tracks (downloaded
+** when first opened).
 */
 bool bt2PrepareFile(const char *path)
 {
@@ -1061,10 +1062,7 @@ bool bt2PrepareFile(const char *path)
 	char msg[2400];
 	const int32_t what = bt2ModlandPrepareSong(abs, song, msg, sizeof (msg));
 	if (msg[0] != '\0')
-	{
 		bt2_toast(msg);
-		bt2_syncFiles(); // (a new copy in BT2/Modland)
-	}
 
 	if (what != BT2_SONG_DOWNLOAD)
 	{
@@ -1080,18 +1078,15 @@ bool bt2PrepareFile(const char *path)
 		return false;
 	}
 
-	bool ownSaved = false;
-	const bool ok = bt2ModlandStoreSong(song, data, (size_t)len, &ownSaved);
+	const bool ok = bt2ModlandStoreSong(song, data, (size_t)len);
 	free(data);
 
 	if (ok)
-		bt2ModlandStoredMessage(song, ownSaved, msg, sizeof (msg));
+		bt2ModlandStoredMessage(song, msg, sizeof (msg));
 	else
 		snprintf(msg, sizeof (msg), "Kunne ikke lagre filen");
 	bt2_toast(msg);
 	free(song);
-
-	bt2_syncFiles();
 	return ok;
 }
 
