@@ -411,6 +411,40 @@ static void drawCheckbox(bt2Canvas *c, float x, float y, bool on) // (Chrome's c
 	}
 }
 
+// The logo is pixel art (like FT2's About screen), so it is shown with a whole number of screen pixels per
+// logo pixel, as large as fits in the web page's box: min(92vw, 760px) wide, 64px high in a low window
+// (the same rule as fitLogos() in index.html). 0 = the box is smaller than the logo.
+static int32_t logoScale(void)
+{
+	if (!logoLoaded || logoSrc.w <= 0 || logoSrc.h <= 0)
+		return 0;
+
+	const float boxW = compact ? 1e9f : fminf(vw * 0.92f, 760.0f);
+	const float boxH = compact ? 64.0f : 1e9f;
+	return (int32_t)floorf(fminf(boxW * s / logoSrc.w, boxH * s / logoSrc.h) + 1e-4f);
+}
+
+static void logoSize(float *w, float *h) // (CSS pixels)
+{
+	const float lw = logoLoaded ? (float)logoSrc.w : 486.0f, lh = logoLoaded ? (float)logoSrc.h : 78.0f;
+	const int32_t k = logoScale();
+	if (k >= 1)
+	{
+		*w = k * lw / s;
+		*h = k * lh / s;
+	}
+	else if (compact)
+	{
+		*h = 64.0f;
+		*w = *h * lw / lh;
+	}
+	else
+	{
+		*w = fminf(vw * 0.92f, 760.0f);
+		*h = *w * lh / lw;
+	}
+}
+
 static void drawLogo(bt2Canvas *c, float x, float y, float w, float h)
 {
 	const int32_t pw = (int32_t)snapPx(w), ph = (int32_t)snapPx(h);
@@ -424,10 +458,12 @@ static void drawLogo(bt2Canvas *c, float x, float y, float w, float h)
 		return;
 	}
 
-	if (logoScaled.px == NULL || logoScaled.w != pw || logoScaled.h != ph)
+	const int32_t k = logoScale();
+	const int32_t tw = (k >= 1) ? k * logoSrc.w : pw, th = (k >= 1) ? k * logoSrc.h : ph;
+	if (logoScaled.px == NULL || logoScaled.w != tw || logoScaled.h != th)
 	{
 		bt2CanvasFree(&logoScaled);
-		if (!bt2Resize(&logoSrc, pw, ph, &logoScaled))
+		if (k >= 1 ? !bt2ScaleUp(&logoSrc, k, &logoScaled) : !bt2Resize(&logoSrc, pw, ph, &logoScaled))
 			return;
 	}
 
@@ -579,13 +615,9 @@ static float buildStart(bt2Canvas *c, float top)
 	const float textW = vw - 32.0f; // (the page's 16px padding on each side)
 	float y = top;
 
-	// the logo (img.logo3d: min(92vw, 640px) wide, 6px under it; 64px high in a low window)
-	float logoW = fminf(vw * 0.92f, 640.0f), logoH = logoW * 185.0f / 1280.0f;
-	if (compact)
-	{
-		logoH = 64.0f;
-		logoW = logoH * 1280.0f / 185.0f;
-	}
+	// the logo (img.logo3d, sharp pixels, see logoScale(); 6px under it, 0 in a low window)
+	float logoW, logoH;
+	logoSize(&logoW, &logoH);
 
 	if (c != NULL)
 		drawLogo(c, cx - logoW * 0.5f, y, logoW, logoH);

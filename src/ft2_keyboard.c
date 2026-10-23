@@ -196,6 +196,47 @@ void keyDownHandler(SDL_Scancode scancode, SDL_Keycode keycode, bool keyWasRepea
 	handleKeys(keycode, scancode); // no pattern editing, do general key handling
 }
 
+// BerntTracker: PgUp/PgDn (16 rows) as functions, so Ctrl+Up/Down can do the same
+static void patternPageUp(void)
+{
+	const bool audioWasntLocked = !audio.locked;
+	if (audioWasntLocked)
+		lockAudio();
+
+	song.row -= 16;
+	if (song.row < 0)
+		song.row = 0;
+
+	if (!songPlaying)
+	{
+		editor.row = (uint8_t)song.row;
+		ui.updatePatternEditor = true;
+	}
+
+	if (audioWasntLocked)
+		unlockAudio();
+}
+
+static void patternPageDown(void)
+{
+	const bool audioWasntLocked = !audio.locked;
+	if (audioWasntLocked)
+		lockAudio();
+
+	song.row += 16;
+	if (song.row >= song.currNumRows)
+		song.row = song.currNumRows-1;
+
+	if (!songPlaying)
+	{
+		editor.row = (uint8_t)song.row;
+		ui.updatePatternEditor = true;
+	}
+
+	if (audioWasntLocked)
+		unlockAudio();
+}
+
 static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 {
 	// if we're holding numpad plus but not pressing bank keys, don't check any other key
@@ -623,6 +664,8 @@ static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 			{
 				if (keyb.leftAltPressed)
 					keybPattMarkUp();
+				else if (keyb.leftCtrlPressed)
+					patternPageUp(); // BerntTracker: Ctrl+Up = PgUp (for laptops without PgUp/PgDn)
 				else
 					rowOneUpWrap();
 			}
@@ -640,53 +683,16 @@ static void handleKeys(SDL_Keycode keycode, SDL_Scancode scanKey)
 			{
 				if (keyb.leftAltPressed)
 					keybPattMarkDown();
+				else if (keyb.leftCtrlPressed)
+					patternPageDown(); // BerntTracker: Ctrl+Down = PgDn (for laptops without PgUp/PgDn)
 				else
 					rowOneDownWrap();
 			}
 		}
 		break;
 
-		case SDLK_PAGEUP:
-		{
-			const bool audioWasntLocked = !audio.locked;
-			if (audioWasntLocked)
-				lockAudio();
-
-			song.row -= 16;
-			if (song.row < 0)
-				song.row = 0;
-
-			if (!songPlaying)
-			{
-				editor.row = (uint8_t)song.row;
-				ui.updatePatternEditor = true;
-			}
-
-			if (audioWasntLocked)
-				unlockAudio();
-		}
-		break;
-
-		case SDLK_PAGEDOWN:
-		{
-			const bool audioWasntLocked = !audio.locked;
-			if (audioWasntLocked)
-				lockAudio();
-
-			song.row += 16;
-			if (song.row >= song.currNumRows)
-				song.row = song.currNumRows-1;
-
-			if (!songPlaying)
-			{
-				editor.row = (uint8_t)song.row;
-				ui.updatePatternEditor = true;
-			}
-
-			if (audioWasntLocked)
-				unlockAudio();
-		}
-		break;
+		case SDLK_PAGEUP: patternPageUp(); break;
+		case SDLK_PAGEDOWN: patternPageDown(); break;
 
 		case SDLK_HOME:
 		{

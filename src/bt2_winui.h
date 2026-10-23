@@ -50,6 +50,7 @@ void bt2Blit(bt2Canvas *dst, const bt2Canvas *src, int32_t x, int32_t y);
 bool bt2DecodePng(const void *data, uint32_t size, bt2Canvas *out); // (Windows' own decoder, WIC)
 bool bt2LoadPngResource(const char *name, bt2Canvas *out); // an RCDATA resource in the program
 bool bt2Resize(const bt2Canvas *src, int32_t w, int32_t h, bt2Canvas *out); // smooth
+bool bt2ScaleUp(const bt2Canvas *src, int32_t k, bt2Canvas *out); // k x k screen pixels per pixel (sharp, for pixel art)
 
 float bt2LineHeight(bt2Font f); // CSS "line-height: normal" for this font
 float bt2TextWidth(bt2Font f, const char *text); // one line

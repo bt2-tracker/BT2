@@ -557,6 +557,16 @@ static void choose(int32_t i)
 bool findScreenKeyDown(SDL_Keycode key)
 {
 	editQuery(); // (a key right after a click outside the search box: it goes to the search box all the same)
+
+	// Ctrl+Up/Down = PgUp/PgDn, as in the pattern editor (for laptops without PgUp/PgDn)
+	if (keyb.leftCtrlPressed && !keyb.leftAltPressed && !keyb.leftShiftPressed)
+	{
+		if (key == SDLK_UP)
+			key = SDLK_PAGEUP;
+		else if (key == SDLK_DOWN)
+			key = SDLK_PAGEDOWN;
+	}
+
 	return handleKey(key, keyb.leftShiftPressed);
 }
 

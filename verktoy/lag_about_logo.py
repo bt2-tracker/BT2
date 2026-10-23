@@ -1,16 +1,231 @@
-# Lager Bernttracker II-logoen i samme stil som 3D-logoen paa About-skjermen i Fasttracker II.
+# Lager Bernttracker II-logoen som en kopi av den klassiske 3D-logoen fra Fasttracker II (About-skjermen),
+# der det staar «Bernttracker» i stedet for «Fasttracker».
 # Kjor fra prosjektmappa:  python verktoy/lag_about_logo.py      (krever: pip install numpy scipy pillow)
 # Skriver:
-#   src/gfxdata/ft2_bernt_about.h  - logoen til About-skjermen (541x78, 8-bit RLE-BMP som originalen)
-#   web/bt2-logo.png               - stor utgave til startskjermen i nettversjonen
-# Skrift: TeX Gyre Bonum (GUST Font License). Logoen er egen tegning, ikke en bearbeidelse av originalgrafikken.
+#   src/gfxdata/ft2_bernt_about.h  - logoen til About-skjermen (485x78, 4-bit RLE-BMP som originalen,
+#                                    fargene er FT2-palettens, saa den foelger fargetemaet slik originalen gjorde)
+#   web/bt2-logo.png               - samme logo i fargene til temaet «Blues» (startskjermen paa nett og i Windows)
+#
+# Slik blir den laget (tar ca. et halvt minutt):
+#   - «ttracker II» er originalen, piksel for piksel.
+#   - «e» og «r» i «Bern» er originalens egne bokstaver, flyttet paa plass i riktig perspektiv (forsidene sees
+#     nedenfra: loddrette streker moetes i et punkt langt over logoen, og 3D-dybden gaar mot et punkt under den).
+#   - «B» og «n» finnes ikke i originalen. De er tegnet med skriften TeX Gyre Termes Bold, malt opp til samme
+#     tykkelse og bredde som originalens bokstaver.
+#   - Alle flatene til de nye bokstavene (forside, sider, skygger) fylles med biter av originalens egen
+#     pikselgrafikk: hver piksel kopieres fra et sted i originalen som har samme slags plass (forside / side /
+#     kant, samme retning og dybde), og naboer kopierer helst fra nabopiksler, saa hele biter blir med.
+#
+# Originalgrafikken (verktoy/ft2_original_logo.bmp, fra ft2-clone sin About-skjerm foer 2024) er laget av
+# Magnus «Vogue» Hoegdahl og har lisens CC BY-NC-SA 4.0 (se src/gfxdata/bmp/LICENSE.txt). Den nye logoen er
+# en bearbeidelse av den, og har samme lisens.
+# Skrift: TeX Gyre Termes (GUST Font License).
 import os, sys, struct
 import numpy as np
-
 from PIL import Image, ImageDraw, ImageFont
-from scipy import ndimage
+from scipy import ndimage as ndi
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+
+# roles (the original BMP's palette order): 0 k (FT2 button text) 1 W (foreground) 2 background (transparent)
+# 3 w (button light) 4 m (buttons) 5 d (button dark)
+BG = 2
+BMP_PAL = [0xABCDEF, 0xFFFFFF, 0x00FF00, 0xD3D3D3, 0x7F7F7F, 0x434343]  # = FT2 palette numbers 7, 5, -, 11, 6, 10
+BLUES = [(0, 0, 0), (255, 255, 255), None, (255, 255, 255), (150, 150, 182), (53, 53, 65)]  # theme «Blues»
+
+# the new word: letters, where each one comes from, and the gaps between the fronts (in flat letter pixels)
+LETTERS = [('B', 'font', 'B'), ('e', 'orig', 'e'), ('r', 'orig', 'r1'), ('n', 'font', 'n')]
+GAPS = [6.5, 7.0, 5.0, 7.0]  # B-e, e-r, r-n, n-t
+SEED = 3
+
+# ------------------------------------------------------------------------------------------------
+# the original logo
+
+
+def decode_bmp(data):
+    """Decodes FT2's RLE BMPs the same way as ft2_bmp.c. Returns palette indices (top row first)."""
+    off, = struct.unpack_from('<I', data, 10)
+    w, h = struct.unpack_from('<ii', data, 18)
+    comp, = struct.unpack_from('<I', data, 30)
+    idx = np.zeros((h, w), np.int32)
+    p, x, y = off, 0, h - 1
+    while p < len(data):
+        b = data[p]; p += 1
+        if b == 0:
+            b = data[p]; p += 1
+            if b == 0:
+                x = 0; y -= 1
+            elif b == 1:
+                break
+            elif b == 2:
+                x += data[p]; y -= data[p + 1]; p += 2
+            elif comp == 1:
+                for i in range(b):
+                    if x + i < w: idx[y, x + i] = data[p]
+                    p += 1
+                if b & 1: p += 1
+                x += b
+            else:
+                for i in range(b >> 1):
+                    v = data[p]; p += 1
+                    if x < w: idx[y, x] = v >> 4
+                    x += 1
+                    if x < w: idx[y, x] = v & 15
+                    x += 1
+                if ((b + 1) >> 1) & 1: p += 1
+        else:
+            v = data[p]; p += 1
+            for i in range(b):
+                if x < w:
+                    idx[y, x] = v if comp == 1 else ((v >> 4) if (i & 1) == 0 else (v & 15))
+                x += 1
+    return idx
+
+
+def find_fronts(c):
+    """the letters' front faces: the light pixels plus the mid pixels between them"""
+    ink = c != BG
+    wl = c == 3
+    f = wl.copy()
+    hz = np.zeros_like(f); hz[:, 1:-1] = wl[:, :-2] & wl[:, 2:]
+    vt = np.zeros_like(f); vt[1:-1] = wl[:-2] & wl[2:]
+    dg = np.zeros_like(f); dg[1:-1, 1:-1] = (wl[:-2, :-2] & wl[2:, 2:]) | (wl[:-2, 2:] & wl[2:, :-2])
+    f |= (c == 4) & (hz | vt | dg)
+    f = ndi.binary_closing(f, structure=np.ones((1, 3))) & ink
+    f = ndi.binary_closing(f, structure=np.ones((3, 1))) & ink
+    holes = ndi.binary_fill_holes(f) & ~f
+    hl, hn = ndi.label(holes)
+    for i, s in enumerate(ndi.sum(holes, hl, range(1, hn + 1))):
+        if s <= 3:
+            f[hl == i + 1] = True
+    lab, n = ndi.label(f)
+    for i, s in enumerate(ndi.sum(f, lab, range(1, n + 1))):
+        if s < 6:
+            f[lab == i + 1] = False
+    return f
+
+
+# where each letter of "Fasttracker II" starts in the original
+STARTS = {'F': 2, 'a': 52, 's': 89, 't1': 124, 't2': 147, 'r1': 167, 'a2': 198, 'c': 234, 'k': 262, 'e': 304,
+          'r2': 332, 'I1': 371, 'I2': 397}
+NAMES = list(STARTS)
+BLOCK_NAMES = ('t1', 't2', 'r1', 'a2', 'c', 'k', 'e', 'r2', 'I1', 'I2')  # «ttracker II» is kept as it is
+
+# 3D: the depth goes towards a point under the logo, the fronts are seen from below (vertical lines meet far above)
+VP0 = 236.0          # x of the depth's vanishing point (y = VPY)
+VPY = 600.0
+DEPTH = 19.0
+BASE_Y = 57.0
+XV = 226.3           # x of the vertical lines' vanishing point
+DV = 398.0           # its distance above the baseline (row 56)
+BASE = 56.0
+YV = BASE - DV
+UP = 8               # letter shapes are worked on at 8x for smooth edges
+
+
+def side_geometry(front, vpx, vpy=VPY, depth=DEPTH, steps=300):
+    H, W = front.shape
+    tmax = depth / (vpy - BASE_Y)
+    yy, xx = np.mgrid[0:H, 0:W].astype(float)
+    trel = np.full((H, W), np.nan)
+    sx = np.zeros((H, W), int); sy = np.zeros((H, W), int)
+    todo = ~front
+    for i in range(1, steps + 1):
+        t = tmax * i / steps
+        px = np.round((xx - t * vpx) / (1 - t)).astype(int)
+        py = np.round((yy - t * vpy) / (1 - t)).astype(int)
+        ok = todo & (px >= 0) & (px < W) & (py >= 0) & (py < H)
+        hit = np.zeros((H, W), bool)
+        hit[ok] = front[py[ok], px[ok]]
+        trel[hit] = i / steps
+        sx[hit] = px[hit]; sy[hit] = py[hit]
+        todo &= ~hit
+    return ~np.isnan(trel), trel, sx, sy
+
+
+class Original:
+    def __init__(self):
+        idx = decode_bmp(open(os.path.join(HERE, 'ft2_original_logo.bmp'), 'rb').read())
+        self.C = idx[:78].copy()  # (the copyright text under the logo is not used)
+        self.F = find_fronts(self.C)
+        H, W = self.C.shape
+        lab0, n0 = ndi.label(self.F)
+        objs = ndi.find_objects(lab0)
+        lab = np.zeros_like(lab0)
+        self.L = {}
+        for i in range(n0):
+            x0 = objs[i][1].start
+            nm = min(STARTS, key=lambda k: abs(STARTS[k] - x0))
+            if abs(STARTS[nm] - x0) > 3:  # a piece inside a letter
+                nm = max([k for k in STARTS if STARTS[k] <= x0], key=lambda k: STARTS[k])
+            lid = NAMES.index(nm) + 1
+            lab[lab0 == i + 1] = lid
+            self.L[nm] = lid
+        self.lab = lab
+        side, trel, sx, sy = side_geometry(self.F, VP0)
+        own = np.zeros((H, W), int)
+        own[self.F] = lab[self.F]
+        own[side] = lab[sy[side], sx[side]]
+        dist, (iy, ix) = ndi.distance_transform_edt(own == 0, return_indices=True)
+        ring = (self.C != BG) & (own == 0) & (dist <= 2.5)
+        own[ring] = own[iy[ring], ix[ring]]
+        self.own = own
+
+
+# ------------------------------------------------------------------------------------------------
+# letter shapes
+
+
+def to_hi(mask):
+    m = np.kron(mask.astype(float), np.ones((UP, UP)))
+    return ndi.gaussian_filter(m, UP * 0.45) > 0.5
+
+
+def to_lo(hi):
+    H, W = hi.shape
+    h, w = H // UP, W // UP
+    return hi[:h * UP, :w * UP].reshape(h, UP, w, UP).mean(axis=(1, 3)) > 0.5
+
+
+def hi_crop(hi):
+    ys, xs = np.nonzero(hi)
+    return hi[:, xs.min():xs.max() + 1], xs.min()
+
+
+def s_of(y):
+    return (y - YV) / (BASE - YV)
+
+
+def unproject(mask, xv=XV):
+    """image mask -> flat (upright) letter at 8x; returns (flat, u0) where column i is u = u0 + i / UP"""
+    hi = to_hi(mask)
+    Hh, Wh = hi.shape
+    ys, xs = np.nonzero(hi)
+    u = xv + ((xs + 0.5) / UP - 0.5 - xv) / s_of((ys + 0.5) / UP - 0.5)
+    u0 = np.floor(u.min()) - 2
+    w = int(np.ceil(u.max() - u0)) + 3
+    out = np.zeros((Hh, w * UP), bool)
+    yy, uu = np.mgrid[0:Hh, 0:w * UP]
+    ycl = (yy + 0.5) / UP - 0.5
+    xi = xv + ((uu + 0.5) / UP - 0.5 + u0 - xv) * s_of(ycl)
+    xh = np.round((xi + 0.5) * UP - 0.5).astype(int)
+    ok = (xh >= 0) & (xh < Wh)
+    out[ok] = hi[yy[ok], xh[ok]]
+    return out, u0
+
+
+def project(flat_hi, u0, W, xv=XV):
+    """flat letter at 8x (column i is u = u0 + i / UP) -> image mask, W pixels wide"""
+    Hh, Wf = flat_hi.shape
+    out = np.zeros((Hh, W * UP), bool)
+    yy, xx = np.mgrid[0:Hh, 0:W * UP]
+    u = xv + ((xx + 0.5) / UP - 0.5 - xv) / s_of((yy + 0.5) / UP - 0.5)
+    uh = np.round((u - u0 + 0.5) * UP - 0.5).astype(int)
+    ok = (uh >= 0) & (uh < Wf)
+    out[ok] = flat_hi[yy[ok], uh[ok]]
+    return to_lo(out)
+
 
 def find_font(name):
     for d in (os.path.join(HERE, 'fonts'), '/usr/share/texmf/fonts/opentype/public/tex-gyre/',
@@ -19,283 +234,334 @@ def find_font(name):
         p = os.path.join(d, name)
         if os.path.exists(p):
             return p
-    sys.exit('Fant ikke skriften %s (TeX Gyre Bonum, gratis fra https://www.gust.org.pl/projects/e-foundry/tex-gyre). '
+    sys.exit('Fant ikke skriften %s (TeX Gyre Termes, gratis fra https://www.gust.org.pl/projects/e-foundry/tex-gyre). '
              'Legg den i verktoy/fonts/.' % name)
 
 
-FONT_WORD = find_font('texgyrebonum-bolditalic.otf')
-FONT_II = find_font('texgyrebonum-bold.otf')
-BASE = 400
+def font_letter(ch, erode=0.5, width=0.9, cap=55.0):
+    """a letter from TeX Gyre Termes Bold, made as thin and narrow as the original's letters"""
+    path = find_font('texgyretermes-bold.otf')
+    f0 = ImageFont.truetype(path, 1000)
+    l, t, r, b = f0.getbbox('H')
+    f = ImageFont.truetype(path, int(round(1000 * cap * UP / (b - t))))
+    asc = f.getmetrics()[0]
+    l, t, r, b = f.getbbox(ch)
+    im = Image.new('L', (r - l + 8 * UP, 78 * UP), 0)
+    ImageDraw.Draw(im).text((4 * UP - l, int((BASE + 1) * UP) - asc), ch, font=f, fill=255)
+    g = np.array(im) > 127
+    g = ndi.binary_erosion(g, structure=np.ones((1, int(round(2 * erode * UP)) + 1)))  # thinner stems
+    im = Image.fromarray((g * 255).astype(np.uint8)).resize((max(1, int(round(g.shape[1] * width))), g.shape[0]),
+                                                             Image.BILINEAR)
+    g2 = np.array(im) > 127
+    out = np.zeros_like(g)
+    out[:, :g2.shape[1]] = g2
+    return hi_crop(out)[0]
 
 
-def glyph(font, ch):
-    l, t, r, b = font.getbbox(ch, anchor='ls')
-    im = Image.new('L', (r - l + 8, b - t + 8), 0)
-    ImageDraw.Draw(im).text((4 - l, 4 - t), ch, font=font, fill=255, anchor='ls')
-    return im, (l - 4, t - 4), (l, t, r, b)
+def orig_letter(o, nm):
+    """an original letter, made upright; returns (flat at 8x, u of its left edge)"""
+    flat, u0 = unproject(((o.lab == o.L[nm]) & o.F)[:78])
+    ys, xs = np.nonzero(flat)
+    return flat[:, xs.min():xs.max() + 1], u0 + xs.min() / UP
 
 
-def layout(word='Bernttracker', track=0.84, k_word=0.10, k_ii=-0.34, ii_scale=1.05, gap=0.30, ii_adv=0.97):
-    fw = ImageFont.truetype(FONT_WORD, BASE)
-    fi = ImageFont.truetype(FONT_II, int(BASE * ii_scale))
-    items = []  # (image, origin(x,y rel. to pen/baseline), pen_x, shear, ink bbox, group)
-    pen = 0.0
-    for ch in word:
-        im, org, ink = glyph(fw, ch)
-        items.append([im, org, pen, k_word, ink, 'word'])
-        pen += fw.getlength(ch) * track
-    pen += BASE * gap
-    # the II: two separate strokes, back-slanted (moves the bottom to the right)
-    for ch in 'II':
-        im, org, ink = glyph(fi, ch)
-        # shift so the slanted stroke starts at the pen position
-        items.append([im, org, pen + (-k_ii) * (ink[3] - ink[1]) * 0.0, k_ii, ink, 'ii'])
-        pen += fi.getlength(ch) * ii_adv
-    return items
+def gap_flat(a, ua, b, ub):
+    g = 1e9
+    for y in range(0, a.shape[0], 2):
+        xa = np.nonzero(a[y])[0]; xb = np.nonzero(b[y])[0]
+        if len(xa) and len(xb):
+            g = min(g, (ub + xb.min() / UP) - (ua + (xa.max() + 1) / UP))
+    return g
 
 
-def sheared_bbox(items):
-    xs, ys = [], []
-    for im, org, px, k, ink, grp in items:
-        l, t, r, b = ink
-        for X, Y in ((l, t), (r, t), (l, b), (r, b)):
-            xs.append(px + X - k * Y)
-            ys.append(Y)
-    return min(xs), min(ys), max(xs), max(ys)
+def layout(letters, gaps, right_flat, right_u):
+    """places the letters right to left (from the first 't') so the gaps between them match"""
+    placed = []
+    nb, nbu = right_flat, right_u
+    for (nm, fl), g in zip(reversed(letters), reversed(gaps)):
+        u = nbu - g - fl.shape[1] / UP
+        for _ in range(40):
+            cur = gap_flat(fl, u, nb, nbu)
+            if abs(cur - g) < 0.13:
+                break
+            u += cur - g
+        placed.append((nm, fl, u))
+        nb, nbu = fl, u
+    return placed[::-1]
 
 
-def render(W, H, S, depth, face_lo=100, face_hi=190, ii_face=186, wordargs={}):
-    dx, dy = depth
-    items = layout(**wordargs)
-    X0, Y0, X1, Y1 = sheared_bbox(items)
-    CW, CH = W * S, H * S
-    bx0, by0 = (dx + 1.5) * S, 1.0 * S
-    bx1, by1 = (W - 1.0) * S, (H - dy - 1.5) * S
-    sx = (bx1 - bx0) / (X1 - X0)
-    sy = (by1 - by0) / (Y1 - Y0)
-    if sx > sy:  # do not stretch wider than the font; centre instead
-        extra = (bx1 - bx0) - (X1 - X0) * sy
-        bx0 += extra / 2
-        sx = sy
+def project_letter(fl, u, W, ext):
+    full = np.zeros((fl.shape[0], int((W + 8) * UP)), bool)
+    x0 = int(round((u + ext) * UP))
+    full[:, x0:x0 + fl.shape[1]] = fl
+    return project(full, 0.0, W, xv=XV + ext)
 
-    rgb = np.zeros((CH, CW, 3), np.float32)
-    alpha = np.zeros((CH, CW), np.float32)
 
-    ex, ey = -dx * S, dy * S
-    N = int(round(max(dx, dy) * S))
-    el = np.hypot(ex, ey)
-    L = np.array([-0.85, -0.35]); L /= np.hypot(*L)
-    word_x0 = bx0
-    word_x1 = max(bx0 + (px + ink[2] - k * ink[1] - X0) * sx for im, org, px, k, ink, grp in items if grp == 'word')
+# ------------------------------------------------------------------------------------------------
+# texture: every new pixel is copied from a place in the original that has the same geometry
 
-    for im, org, px, k, ink, grp in items:
-        # canvas -> glyph image (inverse affine for PIL)
-        a = 1.0 / sx
-        b = k / sy
-        c = X0 - bx0 / sx - px + k * Y0 - k * by0 / sy - org[0]
-        d = 0.0
-        e = 1.0 / sy
-        f = Y0 - by0 / sy - org[1]
-        m = np.asarray(im.transform((CW, CH), Image.AFFINE, (a, b, c, d, e, f), resample=Image.BICUBIC), np.float32) / 255.0
-        face = m > 0.5
-        if not face.any():
-            continue
-        ys_, xs_ = np.where(face)
-        # work area: glyph bbox plus extrusion
-        x0 = max(0, xs_.min() + int(ex) - 3 * S); x1 = min(CW, xs_.max() + 3 * S)
-        y0 = max(0, ys_.min() - 3 * S); y1 = min(CH, ys_.max() + int(ey) + 3 * S)
-        fa = face[y0:y1, x0:x1].astype(np.float32)
-        bl = ndimage.gaussian_filter(fa, S * 0.9)
-        gy, gx = np.gradient(bl)
-        gl = np.hypot(gx, gy) + 1e-9
-        nx, ny = -gx / gl, -gy / gl  # outward normal
-        valid = gl > 1e-4
+R = 4  # neighbourhood radius (9x9)
+OFF = [(dy, dx) for dy in range(-R, R + 1) for dx in range(-R, R + 1) if (dy, dx) != (0, 0)]
+OY = np.array([o[0] for o in OFF]); OX = np.array([o[1] for o in OFF])
+WN = np.exp(-(OY ** 2 + OX ** 2) / (2 * 2.2 ** 2))
 
-        R = rgb[y0:y1, x0:x1]; A = alpha[y0:y1, x0:x1]
-        sweep = np.zeros_like(fa, bool)
-        for j in range(N, 0, -1):
-            t = j / N
-            sxp, syp = int(round(ex * t)), int(round(ey * t))
-            sh = ndimage.shift(fa, (syp, sxp), order=0) > 0.5
-            snx = ndimage.shift(nx, (syp, sxp), order=0)
-            sny = ndimage.shift(ny, (syp, sxp), order=0)
-            sval = ndimage.shift(valid.astype(np.float32), (syp, sxp), order=0) > 0.5
-            lam = np.clip(snx * L[0] + sny * L[1], 0, 1)
-            lam = np.where(sval, lam, 0.15)
-            near = np.clip(1.0 - t / 0.32, 0, 1)
-            v = 27 + 18 * lam + 52 * lam * near ** 1.5
-            # far back slightly darker
-            v *= (1.0 - 0.10 * t)
-            R[sh] = v[sh][:, None]
-            A[sh] = 1
-            sweep |= sh
 
-        # dark separation line around the front face
-        ring = ndimage.binary_dilation(face[y0:y1, x0:x1], iterations=max(1, int(S * 0.8))) & ~face[y0:y1, x0:x1]
-        R[ring & sweep] = 14
-        # dark outline around the whole letter (front + extrusion)
-        full = sweep | face[y0:y1, x0:x1]
-        outl = ndimage.binary_dilation(full, iterations=max(1, int(S * 0.9))) & ~full
-        R[outl] = 9
-        A[outl] = 1
+def features(front, vpx):
+    """class of every pixel (0 background, 1 front, 2 side, 3/4 outline) and where in its face it sits"""
+    H, W = front.shape
+    side, trel, sx, sy = side_geometry(front, vpx)
+    f = ndi.gaussian_filter(front.astype(float), 1.2)
+    gy, gx = np.gradient(f)
+    ang = np.arctan2(-gy, -gx)
+    body = front | side
+    dist_out = ndi.distance_transform_edt(~body)
+    cls = np.zeros((H, W), np.int8)
+    cls[(dist_out > 0) & (dist_out <= 1.0)] = 3
+    cls[(dist_out > 1.0) & (dist_out <= 2.0)] = 4
+    cls[side] = 2
+    cls[front] = 1
+    F = {'cls': cls, 'trel': np.nan_to_num(trel), 'sx': sx, 'sy': sy}
 
-        # front face: flat grey, lighter towards the right
-        fy, fx = np.where(face[y0:y1, x0:x1])
-        gxs = fx + x0
-        if grp == 'word':
-            base = face_lo + (face_hi - face_lo) * np.clip((gxs - word_x0) / (word_x1 - word_x0), 0, 1)
+    def run(m, axis, rev):
+        mm = np.flip(m, axis) if rev else m
+        d = np.zeros(mm.shape, np.int16)
+        if axis == 1:
+            for i in range(mm.shape[1]):
+                d[:, i] = np.where(mm[:, i], (d[:, i - 1] if i else 0) + 1, 0)
         else:
-            base = np.full(fx.shape, float(ii_face))
-        # bright rim along the inside of the front edges (strongest on the sides)
-        inner = ndimage.distance_transform_edt(face[y0:y1, x0:x1])
-        dist = inner[fy, fx] / S
-        rim = np.clip(1.0 - (dist - 0.2) / 1.1, 0, 1)
-        side = np.abs(nx[fy, fx]) * valid[fy, fx]
-        topb = np.clip(-ny[fy, fx], 0, 1) * valid[fy, fx]
-        val = base + rim * (16 + 22 * side + 8 * topb)
-        val = np.minimum(val, 222)
-        R[fy, fx] = val[:, None]
-        A[fy, fx] = 1
-
-    # neutral grey with a tiny bit of blue in the dark parts (like the original's 2B2A2A/1D1D1D tones)
-    rgb[..., 2] *= 1.0
-    img = np.dstack([np.clip(rgb, 0, 255), alpha * 255]).astype(np.uint8)
-    im = Image.fromarray(img, 'RGBA')
-    # premultiplied downscale
-    pm = np.asarray(im, np.float32)
-    pm[..., :3] *= pm[..., 3:4] / 255.0
-    small = Image.fromarray(np.clip(pm, 0, 255).astype(np.uint8), 'RGBA').resize((W, H), Image.LANCZOS)
-    s = np.asarray(small, np.float32)
-    al = s[..., 3:4]
-    col = np.where(al > 0, s[..., :3] * 255.0 / np.maximum(al, 1), 0)
-    return np.dstack([np.clip(col, 0, 255), al]).astype(np.uint8)
+            for i in range(mm.shape[0]):
+                d[i] = np.where(mm[i], (d[i - 1] if i else 0) + 1, 0)
+        return np.flip(d, axis) if rev else d
+    for k, (ax, rv) in {'dl': (1, False), 'dr': (1, True), 'du': (0, False), 'dd': (0, True)}.items():
+        F[k] = np.minimum(run(front, ax, rv), 5).astype(float)
+    a = np.zeros((H, W)); a[side] = ang[sy[side], sx[side]]
+    F['ca'] = np.cos(a) * side; F['sa'] = np.sin(a) * side
+    F['dfront'] = np.minimum(ndi.distance_transform_edt(~front), 8.0)
+    F['dout'] = np.minimum(ndi.distance_transform_edt(body), 8.0)
+    r = np.zeros((H, W), np.int16)
+    for bit, (dy, dx) in enumerate(((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))):
+        sh = np.zeros_like(body)
+        ys = slice(max(dy, 0), H + min(dy, 0)); yd = slice(max(-dy, 0), H + min(-dy, 0))
+        xs = slice(max(dx, 0), W + min(dx, 0)); xd = slice(max(-dx, 0), W + min(-dx, 0))
+        sh[yd, xd] = body[ys, xs]
+        r |= sh.astype(np.int16) << bit
+    F['ring'] = r
+    _, (iy, ix) = ndi.distance_transform_edt(~body, return_indices=True)
+    F['ncls'] = cls[iy, ix].astype(float)
+    F['nca'] = F['ca'][iy, ix]; F['nsa'] = F['sa'][iy, ix]
+    return F
 
 
+def geo_cost(FT, y, x, FS, cy, cx):
+    c = FT['cls'][y, x]
+    d = (FS['cls'][cy, cx] != c) * 100.0
+    if c == 1:
+        for k in ('dl', 'dr', 'du', 'dd'):
+            d = d + np.abs(FS[k][cy, cx] - FT[k][y, x]) * 0.8
+    elif c == 2:
+        dot = FS['ca'][cy, cx] * FT['ca'][y, x] + FS['sa'][cy, cx] * FT['sa'][y, x]
+        d = d + (1 - np.clip(dot, -1, 1)) * 6.0
+        d = d + np.abs(FS['trel'][cy, cx] - FT['trel'][y, x]) * 5.0
+        d = d + np.abs(FS['dfront'][cy, cx] - FT['dfront'][y, x]) * 0.5
+        d = d + np.abs(FS['dout'][cy, cx] - FT['dout'][y, x]) * 0.7
+    elif c in (3, 4):
+        x_or = np.bitwise_xor(FS['ring'][cy, cx], FT['ring'][y, x])
+        bits = np.zeros(len(cy))
+        for b in range(8):
+            bits += (x_or >> b) & 1
+        d = d + bits * 0.6
+        d = d + (FS['ncls'][cy, cx] != FT['ncls'][y, x]) * 2.0
+        dot = FS['nca'][cy, cx] * FT['nca'][y, x] + FS['nsa'][cy, cx] * FT['nsa'][y, x]
+        d = d + (1 - np.clip(dot, -1, 1)) * 2.0
+    return d
 
 
-# ---- 8-bit RLE BMP (leses av loadBMPTo32Bit i ft2_bmp.c)
-def decode(src):
-    (bfType, bfSize, r1, r2, bfOffBits, biSize, biWidth, biHeight, biPlanes, biBitCount,
-     biCompression, biSizeImage, xp, yp, biClrUsed, biClrImportant) = struct.unpack_from('<HIHHIIiiHHIIiiII', src, 0)
-    assert biCompression in (1, 2)
-    pe = biClrUsed if biClrUsed else (1 << biBitCount)
-    assert pe <= 256
-    pal = []
-    for i in range(pe):
-        b, g, r, _ = src[0x36 + i * 4:0x3a + i * 4]
-        pal.append((r << 16) | (g << 8) | b)
-    out = np.full(biWidth * biHeight, pal[0], np.uint32)
-    p = bfOffBits; x = 0; y = biHeight - 1
-    while True:
-        byte = src[p]; p += 1
-        if byte == 0:
-            byte = src[p]; p += 1
-            if byte == 0: x = 0; y -= 1
-            elif byte == 1: break
-            elif byte == 2: x += src[p]; y -= src[p + 1]; p += 2
-            else:
-                assert biCompression == 1
-                for i in range(byte):
-                    out[y * biWidth + x + i] = pal[src[p]]; p += 1
-                if byte & 1: p += 1
-                x += byte
-        else:
-            idx = src[p]; p += 1
-            assert biCompression == 1
-            out[y * biWidth + x: y * biWidth + x + byte] = pal[idx]
-            x += byte
-    return out.reshape(biHeight, biWidth), pal, (biWidth, biHeight)
+def synthesize(T, known, src, FT, img, FS, todo, rng, passes=3, kapp=40, kappa=0.35):
+    H, W = T.shape
+    SH, SW = img.shape
+    ipad = np.pad(img, R, constant_values=BG)
+    cpad = np.pad(FS['cls'], R, constant_values=0)
+    byclass = {c: np.nonzero(FS['cls'] == c) for c in (1, 2, 3, 4)}
+    valid = FS['cls'] != 0
+    clsT = FT['cls']
+    Tpad = np.pad(T, R, constant_values=BG)
+    Kpad = np.pad(known, R, constant_values=True)
+    Cpad = np.pad(clsT, R, constant_values=0)
+    srcp = np.pad(src, ((R, R), (R, R), (0, 0)), constant_values=-1)
+    pts = list(zip(*np.nonzero(todo)))
+    for it in range(passes):
+        for (y, x) in pts:
+            c = clsT[y, x]
+            if c == 0:
+                T[y, x] = BG; Tpad[y + R, x + R] = BG; Kpad[y + R, x + R] = True
+                continue
+            tv = Tpad[y + R + OY, x + R + OX]
+            tk = Kpad[y + R + OY, x + R + OX]
+            tc = Cpad[y + R + OY, x + R + OX]
+            # continue copying from where the neighbours were copied from ...
+            sy_ = srcp[y + R + OY, x + R + OX, 0]; sx_ = srcp[y + R + OY, x + R + OX, 1]
+            ok = sy_ >= 0
+            cy1 = sy_[ok] - OY[ok]; cx1 = sx_[ok] - OX[ok]
+            inb = (cy1 >= 0) & (cy1 < SH) & (cx1 >= 0) & (cx1 < SW)
+            cy1 = cy1[inb]; cx1 = cx1[inb]
+            if len(cy1):
+                v = valid[cy1, cx1]
+                cy1 = cy1[v]; cx1 = cx1[v]
+            # ... or from the places with the most similar geometry
+            ys, xs = byclass[c]
+            g = geo_cost(FT, y, x, FS, ys, xs)
+            k = min(kapp, len(g))
+            idx = np.argpartition(g + rng.rand(len(g)) * 0.05, k - 1)[:k]
+            cy = np.concatenate([cy1, ys[idx]]); cx = np.concatenate([cx1, xs[idx]])
+            coh = np.concatenate([np.ones(len(cy1), bool), np.zeros(k, bool)])
+            yy = cy[:, None] + OY[None, :] + R; xx = cx[:, None] + OX[None, :] + R
+            sv, sc = ipad[yy, xx], cpad[yy, xx]
+            tex = ((sv != tv[None, :]) * tk[None, :] * WN[None, :]).sum(1) / max(1e-6, (tk * WN).sum())
+            struct_ = ((sc != tc[None, :]) * WN[None, :]).sum(1) / WN.sum()
+            cost = tex * 10 + struct_ * 6 + geo_cost(FT, y, x, FS, cy, cx)
+            cost = np.where(coh, cost, cost * (1 + kappa) + 0.05)
+            j = int(np.argmin(cost + rng.rand(len(cost)) * 1e-3))
+            T[y, x] = img[cy[j], cx[j]]
+            Tpad[y + R, x + R] = T[y, x]; Kpad[y + R, x + R] = True
+            srcp[y + R, x + R] = (cy[j], cx[j])
+    return T
 
-def encode(idx, pal, dpi=300):
-    """idx: HxW array of palette indices (uint8); pal: list of 0xRRGGBB (<=256). Returns BMP bytes (RLE8)."""
+
+# ------------------------------------------------------------------------------------------------
+
+
+def build():
+    o = Original()
+    H, W0 = o.C.shape
+    t1_flat, t1_u = orig_letter(o, 't1')
+    letters = []
+    for nm, kind, what in LETTERS:
+        letters.append((nm, font_letter(what) if kind == 'font' else orig_letter(o, what)[0]))
+    placed = layout(letters, GAPS, t1_flat, t1_u)
+    minx = min(np.nonzero(project_letter(fl, u, W0 + 120, 100))[1].min() - 100 for nm, fl, u in placed)
+    EXT = int(max(0, 3 - minx))  # the logo grows to the left
+    Wn = W0 + EXT
+    newf = np.zeros((H, Wn), bool)
+    for nm, fl, u in placed:
+        newf |= project_letter(fl, u, Wn, EXT)[:H]
+    # «ttracker II»: copied (stray ink the 3D model does not explain goes with the nearest letter)
+    own = o.own.copy()
+    dist, (iy0, ix0) = ndi.distance_transform_edt(o.own == 0, return_indices=True)
+    stray = (o.C != BG) & (o.own == 0) & (dist <= 4)
+    own[stray] = o.own[iy0[stray], ix0[stray]]
+    blockown = np.isin(own, [o.L[n] for n in BLOCK_NAMES])
+    T = np.full((H, Wn), BG, int)
+    copied = np.zeros((H, Wn), bool)
+    src = np.full((H, Wn, 2), -1, int)
+    ys, xs = np.nonzero(blockown)
+    T[ys, xs + EXT] = o.C[ys, xs]; copied[ys, xs + EXT] = True
+    src[ys, xs + EXT, 0] = ys; src[ys, xs + EXT, 1] = xs
+    fronts = newf.copy()
+    ys, xs = np.nonzero(o.F & blockown)
+    fronts[ys, xs + EXT] = True
+    FT = features(fronts, VP0 + EXT)
+    cls = FT['cls']
+    side = cls == 2
+    sidenew = side & newf[FT['sy'], FT['sx']]
+    body = (cls == 1) | (cls == 2)
+    _, (iy, ix) = ndi.distance_transform_edt(~body, return_indices=True)
+    ringnew = np.isin(cls, (3, 4)) & (newf | sidenew)[iy, ix]
+    todo = (newf | sidenew | ringnew) & (cls != 0)
+    copied &= ~todo
+    T[todo] = BG
+    src[todo] = -1
+    known = copied | (cls == 0)
+    T[(cls == 0) & ~copied] = BG
+    FS = features(o.F, VP0)
+    T = synthesize(T, known, src, FT, o.C, FS, todo, np.random.RandomState(SEED))
+    # the original never has a 2x2 block of the mid colour on a front
+    fr = (cls == 1) & todo
+    for _ in range(2):
+        m = T == 4
+        blk = m[:-1, :-1] & m[1:, :-1] & m[:-1, 1:] & m[1:, 1:] & fr[:-1, :-1] & fr[1:, :-1] & fr[:-1, 1:] & fr[1:, 1:]
+        for y, x in zip(*np.nonzero(blk)):
+            if T[y, x] == 4 and T[y, x + 1] == 4 and T[y + 1, x] == 4 and T[y + 1, x + 1] == 4:
+                T[y, x + 1] = 3
+                T[y + 1, x] = 3
+    # check: everything right of the first 't' is the original, pixel for pixel
+    assert np.array_equal(T[:, EXT + 140:], o.C[:, 140:])
+    # an even width (one empty column at the right): then the web page can show it with every pixel exact
+    if T.shape[1] & 1:
+        T = np.concatenate([T, np.full((H, 1), BG, T.dtype)], axis=1)
+    return T.astype(np.uint8)
+
+
+def encode_rle4(idx, pal):
+    """4-bit RLE BMP the way ft2_bmp.c reads it (even run lengths only)"""
     H, W = idx.shape
     data = bytearray()
-    for y in range(H - 1, -1, -1):  # bottom-up
-        row = [int(v) for v in idx[y]]
-        x = 0
-        while x < W:
-            # run length at x
-            run = 1
-            while x + run < W and row[x + run] == row[x] and run < 255:
-                run += 1
-            if run >= 3 or W - x < 3:
-                # encoded run(s) (also used for the last 1-2 pixels of a line)
-                if run >= 3:
-                    data += bytes((run, row[x])); x += run
+    for y in range(H - 1, -1, -1):  # BMP rows go bottom-up
+        row = list(idx[y]) + [0] * (W & 1)
+        pairs = [(row[i] << 4) | row[i + 1] for i in range(0, len(row), 2)]
+        i = 0
+        lit = []
+
+        def flush():
+            j = 0
+            while j < len(lit):
+                n = min(len(lit) - j, 127)
+                if n >= 2:
+                    data.extend((0, 2 * n)); data.extend(lit[j:j + n])
+                    if n & 1: data.append(0)
                 else:
-                    data += bytes((1, row[x])); x += 1
-                continue
-            # absolute block: collect pixels until a run of >=3 starts (min 3 bytes, max 255)
-            start = x
-            n = 0
-            while x + n < W and n < 255:
-                r = 1
-                while x + n + r < W and row[x + n + r] == row[x + n] and r < 3:
-                    r += 1
-                if r >= 3 and n >= 3:
-                    break
-                n += 1
-            # absolute mode needs >= 3 pixels
-            if n < 3:
-                n = min(3, W - x)
-                if n < 3:
-                    for i in range(n):
-                        data += bytes((1, row[x + i]))
-                    x += n
-                    continue
-            data += bytes((0, n)) + bytes(row[x:x + n])
-            if n & 1: data += b'\x00'
-            x += n
-        data += b'\x00\x00'  # end of line
-    data[-2:] = b'\x00\x01'  # last end-of-line becomes end-of-bitmap
-    npal = len(pal)
+                    data.extend((2, lit[j]))
+                j += n
+            lit.clear()
+        while i < len(pairs):
+            k = 1
+            while i + k < len(pairs) and pairs[i + k] == pairs[i] and k < 127:
+                k += 1
+            if k >= 2:
+                flush()
+                data.extend((2 * k, pairs[i]))
+            else:
+                lit.append(pairs[i])
+            i += k
+        flush()
+        data.extend((0, 0))
+    data[-2:] = b'\x00\x01'
     palb = bytearray()
     for c in pal:
         palb += bytes((c & 255, (c >> 8) & 255, (c >> 16) & 255, 0))
     off = 14 + 40 + len(palb)
-    ppm = int(round(dpi / 0.0254))
     hdr = struct.pack('<2sIHHI', b'BM', off + len(data), 0, 0, off)
-    info = struct.pack('<IiiHHIIiiII', 40, W, H, 1, 8, 1, len(data), ppm, ppm, npal, npal)
+    info = struct.pack('<IiiHHIIiiII', 40, W, H, 1, 4, 2, len(data), 2834, 2834, len(pal), len(pal))
     return bytes(hdr + info + palb + data)
 
-def to_c_array(name, data, per_line=16):
-    lines = []
-    for i in range(0, len(data), per_line):
-        lines.append('\t' + ','.join('0x%02X' % b for b in data[i:i + per_line]) + ',')
+
+def to_c_array(name, data, per_line=24):
+    lines = ['\t' + ','.join('0x%02X' % b for b in data[i:i + per_line]) + ',' for i in range(0, len(data), per_line)]
     lines[-1] = lines[-1].rstrip(',')
-    return 'const uint8_t %s[%d] =\n{\n%s\n};\n' % (name, len(data), '\n'.join(lines))
+    return 'static const uint8_t %s[%d] =\n{\n%s\n};\n' % (name, len(data), '\n'.join(lines))
 
 
 def main():
-    root = os.path.dirname(HERE)
-    # About-skjermen: 541x78, 0x00FF00 = gjennomsiktig
-    W, H = 541, 78
-    sm = render(W, H, S=6, depth=(10.5, 11.5))
-    a = sm[..., 3].astype(np.float32) / 255.0
-    rgb = sm[..., :3].astype(np.float32) * a[..., None] + np.array([12, 12, 12], np.float32) * (1 - a[..., None])
-    rgb = np.clip(np.round(rgb), 0, 255).astype(np.uint8)
-    key = a < 0.5
-    q = Image.fromarray(rgb[~key].reshape(-1, 1, 3), 'RGB').quantize(colors=255, method=Image.Quantize.MEDIANCUT,
-                                                                       dither=Image.Dither.NONE)
-    qpal = q.getpalette()
-    qidx = np.asarray(q).reshape(-1)
-    pal = [0x00FF00] + [(qpal[i * 3] << 16) | (qpal[i * 3 + 1] << 8) | qpal[i * 3 + 2] for i in range(qidx.max() + 1)]
-    idx = np.zeros((H, W), np.uint8)
-    idx[~key] = qidx + 1
-    data = encode(idx, pal)
-    dec, _, _ = decode(data)
-    assert np.array_equal(dec, np.array(pal, np.uint32)[idx])
-    hdr = ('// Bernttracker II-logo for About-skjermen (541x78 piksler, 8-bit RLE-BMP som originalen, 0x00FF00 = gjennomsiktig).\n'
-           '// Egen tegning i samme stil som originalens 3D-logo (laget med verktoy/lag_about_logo.py, skrift: TeX Gyre Bonum).\n'
-           '// Ikke rediger for haand.\n\n#pragma once\n\n#include <stdint.h>\n\n')
-    body = to_c_array('bt2AboutLogoBMP', data, per_line=24).replace('const uint8_t', 'static const uint8_t', 1)
-    open(os.path.join(root, 'src', 'gfxdata', 'ft2_bernt_about.h'), 'w', newline='\n').write(hdr + body)
-    # startskjermen: stor utgave med gjennomsiktig bakgrunn
-    BW = 1280
-    f = BW / 541
-    big = render(BW, round(BW * 78 / 541), S=3, depth=(10.5 * f, 11.5 * f))
-    Image.fromarray(big, 'RGBA').save(os.path.join(root, 'web', 'bt2-logo.png'), optimize=True)
-    print('Ferdig: src/gfxdata/ft2_bernt_about.h (%d byte) og web/bt2-logo.png' % len(data))
+    T = build()
+    H, W = T.shape
+    data = encode_rle4(T, BMP_PAL)
+    assert np.array_equal(decode_bmp(data), T)
+    hdr = ('// Bernttracker II-logo for About-skjermen (%dx%d piksler, 4-bit RLE-BMP som originalen, 0x00FF00 = gjennomsiktig).\n'
+           '// Fargene er FT2-palettens (som i originalens gamle About-logo), saa logoen foelger fargetemaet.\n'
+           '// Bearbeidet fra den klassiske Fasttracker II-logoen av Magnus "Vogue" Hoegdahl, lisens CC BY-NC-SA 4.0\n'
+           '// (laget med verktoy/lag_about_logo.py). Ikke rediger for haand.\n\n#pragma once\n\n#include <stdint.h>\n\n'
+           '#define BT2_ABOUT_LOGO_W %d\n#define BT2_ABOUT_LOGO_H %d\n\n'
+           '#ifndef BT2_ABOUT_LOGO_SIZE_ONLY // (ft2_about.c only needs the size)\n\n') % (W, H, W, H)
+    open(os.path.join(ROOT, 'src', 'gfxdata', 'ft2_bernt_about.h'), 'w', newline='\n').write(
+        hdr + to_c_array('bt2AboutLogoBMP', data) + '\n#endif\n')
+    # the start screen: 1 pixel per logo pixel (the page scales it up with sharp pixels), transparent background
+    im = Image.fromarray(T, 'P')
+    pal = []
+    for c in BLUES:
+        pal += list(c) if c is not None else [0, 0, 0]
+    im.putpalette(pal + [0] * (768 - len(pal)))
+    im.info['transparency'] = BG
+    im.save(os.path.join(ROOT, 'web', 'bt2-logo.png'), optimize=True, transparency=BG)
+    print('Ferdig: src/gfxdata/ft2_bernt_about.h (%d byte) og web/bt2-logo.png (%dx%d)' % (len(data), W, H))
 
 
 if __name__ == '__main__':

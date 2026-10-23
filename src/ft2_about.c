@@ -17,8 +17,10 @@
 #define ABOUT_SCREEN_Y 3
 #define ABOUT_SCREEN_W 626
 #define ABOUT_SCREEN_H 167
-#define ABOUT_LOGO_W 541
-#define ABOUT_LOGO_H 78
+#define BT2_ABOUT_LOGO_SIZE_ONLY
+#include "gfxdata/ft2_bernt_about.h" // BerntTracker: (only the logo's size)
+#define ABOUT_LOGO_W BT2_ABOUT_LOGO_W
+#define ABOUT_LOGO_H BT2_ABOUT_LOGO_H
 #define BG_COLORKEY 0xFF000000
 #define STAR_PIXEL_ID 0xFE000000
 #define STAR_Z_SPEED 3
@@ -230,8 +232,8 @@ void showAboutScreen(void) // called once when about screen is opened
 			video.frameBuffer[(y * SCREEN_W) + x] = BG_COLORKEY;
 	}
 
-	// FT2 logo
-	blit32((SCREEN_W - ABOUT_LOGO_W) / 2, 30, bmp.ft2AboutLogo, ABOUT_LOGO_W, ABOUT_LOGO_H);
+	// FT2 logo (BerntTracker: in palette colors, the background is see-through so the stars show)
+	blit((SCREEN_W - ABOUT_LOGO_W) / 2, 30, bmp.ft2AboutLogo, ABOUT_LOGO_W, ABOUT_LOGO_H);
 
 	// render static texts
 	textOut(customText0X, customText0Y, PAL_FORGRND, customText0);

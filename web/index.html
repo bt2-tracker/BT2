@@ -98,8 +98,10 @@ canvas.stars { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0;
 	image-rendering: pixelated; image-rendering: crisp-edges; }
 #loading > :not(.stars), #start > :not(.stars):not(#credits) { position: relative; z-index: 1; }
 #credits { z-index: 1; }
-img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 6px; pointer-events: none;
-	-webkit-user-drag: none; }
+/* the logo is pixel art (like FT2's About screen): fitLogos() gives it a whole number of screen pixels per
+   logo pixel, as large as fits in min(92vw, 760px) (64px high in a low window) */
+img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 6px; pointer-events: none;
+	-webkit-user-drag: none; image-rendering: pixelated; image-rendering: crisp-edges; }
 @media (max-height: 560px) { img.logo3d { width: auto; height: 64px; margin: 0; } }
 </style>
 </head>
@@ -213,7 +215,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.26';
+	const BT2_VERSION = '0.27';
 	const BT2_DATE = '23.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -1706,6 +1708,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			}
 			if (e.altKey && !e.ctrlKey && !BT2.isApple()) e.preventDefault(); // (Alt+arrow = back/forward, Alt+letter = menus on Windows)
 			let k = SDLK[e.key] || 0;
+			if (e.ctrlKey && !e.altKey && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown'))
+				k = SDLK[e.key === 'ArrowUp' ? 'PageUp' : 'PageDown']; // (Ctrl+Up/Down = PgUp/PgDn, as in the pattern editor)
 			if ((e.key === 'Home' || e.key === 'End') && inp().value !== '') k = 0; // (with text: the start/end of the text)
 			if (e.isComposing || e.keyCode === 229) k = 0; // (a letter being put together, e.g. ´ + e)
 			if (!k) return;
@@ -1727,6 +1731,45 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	})();
 	starfield.kick();
 	window.addEventListener('resize', () => starfield.kick());
+
+	// ---------- the logo on the start screen
+	// It is pixel art, so it gets a whole number of screen pixels per logo pixel, and it starts on a whole
+	// screen pixel (otherwise some pixel columns would be wider than others; its width is even, so it can).
+	// The same size rule as logoScale() in bt2_winstart.c.
+	const fitLogos = () => {
+		const dpr = window.devicePixelRatio || 1;
+		const low = window.matchMedia ? matchMedia('(max-height: 560px)').matches : window.innerHeight <= 560;
+		for (const img of document.querySelectorAll('img.logo3d')) {
+			const w = img.naturalWidth, h = img.naturalHeight;
+			if (!w || !h) continue;
+			const boxW = low ? Infinity : Math.min(window.innerWidth * 0.92, 760), boxH = low ? 64 : Infinity;
+			const k = Math.floor(Math.min(boxW * dpr / w, boxH * dpr / h) + 1e-4);
+			const cssW = (k >= 1) ? k * w / dpr : Math.min(boxW, boxH * w / h);
+			img.style.width = cssW + 'px';
+			img.style.height = (cssW * h / w) + 'px';
+			img.style.left = img.style.top = '';
+			const r = img.getBoundingClientRect();
+			if (!r.width) continue; // (not shown)
+			const dx = (Math.round(r.left * dpr) - r.left * dpr) / dpr, dy = (Math.round(r.top * dpr) - r.top * dpr) / dpr;
+			img.style.position = 'relative'; // (moves only the logo, not what is under it)
+			img.style.left = dx + 'px';
+			img.style.top = dy + 'px';
+		}
+	};
+	let fitQueued = false;
+	const queueFit = () => {
+		if (fitQueued) return;
+		fitQueued = true;
+		requestAnimationFrame(() => { fitQueued = false; fitLogos(); });
+	};
+	for (const img of document.querySelectorAll('img.logo3d')) img.addEventListener('load', queueFit);
+	window.addEventListener('resize', queueFit);
+	// (the start screen's other parts come and go and move the logo up or down)
+	if (window.MutationObserver)
+		for (const el of [$('loading'), $('start')])
+			if (el) new MutationObserver(queueFit).observe(el, { childList: true, subtree: true, characterData: true,
+				attributes: true, attributeFilter: ['class'] });
+	fitLogos();
 
 	// ---------- hardware/Bluetooth keyboard
 	// Runs before the program sees the key. Keeps the modifier keys in step with the browser, makes

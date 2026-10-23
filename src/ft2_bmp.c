@@ -82,7 +82,9 @@ bool loadBMPs(void)
 {
 	memset(&bmp, 0, sizeof (bmp));
 
-	bmp.ft2AboutLogo = loadBMPTo32Bit(bt2AboutLogoBMP); // BerntTracker: own logo (original: ft2AboutLogoBMP)
+	// BerntTracker: the classic 3D logo with «Bernttracker», in the FT2 palette's colors so it follows the
+	// color theme, like the original's old About logo did (original: loadBMPTo32Bit(ft2AboutLogoBMP))
+	bmp.ft2AboutLogo = loadBMPTo4BitPal(bt2AboutLogoBMP);
 	bmp.buttonGfx = loadBMPTo1Bit(buttonGfxBMP);
 	bmp.font1 = loadBMPTo1Bit(font1BMP);
 	bmp.font2 = loadBMPTo1Bit(font2BMP);

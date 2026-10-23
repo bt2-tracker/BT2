@@ -395,6 +395,22 @@ bool bt2Resize(const bt2Canvas *src, int32_t w, int32_t h, bt2Canvas *out)
 	return true;
 }
 
+bool bt2ScaleUp(const bt2Canvas *src, int32_t k, bt2Canvas *out)
+{
+	if (src->px == NULL || k < 1 || !bt2CanvasAlloc(out, src->w * k, src->h * k))
+		return false;
+
+	for (int32_t y = 0; y < out->h; y++)
+	{
+		const uint32_t *s = &src->px[(size_t)(y / k) * src->w];
+		uint32_t *d = &out->px[(size_t)y * out->w];
+		for (int32_t x = 0; x < out->w; x++)
+			d[x] = s[x / k];
+	}
+
+	return true;
+}
+
 // ------------------------------------------------------------------------------------------------
 // text
 
