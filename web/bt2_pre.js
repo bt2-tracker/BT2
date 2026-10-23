@@ -14,6 +14,7 @@
 
 // the page reads the mixed sound through this (always the current memory view)
 Module['bt2HeapF32'] = function () { return HEAPF32; };
+Module['bt2HeapU8'] = function () { return HEAPU8; }; // (files and the Modland list to the program)
 Module['bt2StorageOK'] = false;
 
 Module['preRun'] = Module['preRun'] || [];
@@ -109,15 +110,7 @@ Module['preRun'].push(function () {
 		};
 	});
 
-	// ---- the Modland library (/Modland) is filled in folder by folder, when a folder is first listed
-	var origReaddir = FS.readdir;
-	FS.readdir = function (path) {
-		try {
-			if (globalThis.BT2 && globalThis.BT2.fsReaddirHook)
-				globalThis.BT2.fsReaddirHook(absPath(path));
-		} catch (e) {}
-		return origReaddir.apply(this, arguments);
-	};
+	// (the Modland library, /Modland, is filled in folder by folder by the program: bt2_modland.c)
 
 	// ---- the connection to IndexedDB: when the browser closes it (Safari: "Connection to Indexed
 	// Database server lost", e.g. after a while in the background), forget it so the next save opens a new one

@@ -5,8 +5,6 @@
 ** the user's BT2/Modland folder (never over a file that has anything in it).
 */
 
-#ifndef __EMSCRIPTEN__ // (the web version still does this in index.html)
-
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -18,7 +16,9 @@
 
 #define MAX_LIST_ZIP (256u * 1024 * 1024)
 #define MAX_LIST_TEXT (512u * 1024 * 1024)
-#define MAX_NAME 200 // bytes in one name (like the web version's cleanName)
+#define MAX_SONG_SIZE (256u * 1024 * 1024)
+#define MAX_NAME 200 // bytes in one name on Modland
+#define LOCAL_MAX (MAX_NAME * 3 + 40) // a name here (old Windows letters take up to 3 bytes in UTF-8, and "(2)")
 
 typedef struct mlFile_t
 {
@@ -304,24 +304,14 @@ bool bt2ModlandLoadSaved(bool *old)
 	return bt2ModlandUseList((char *)text, len);
 }
 
-char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress, void *ud, bt2NetResult *res, bool *unreadable, size_t *outLen)
+char *bt2ModlandListFromZip(const uint8_t *zip, size_t zipLen, size_t *outLen)
 {
-	*unreadable = false;
 	*outLen = 0;
-
-	uint8_t *zip = NULL;
-	size_t zipLen = 0;
-	if (!bt2NetGet(setup.listUrl, MAX_LIST_ZIP, cancel, progress, ud, &zip, &zipLen, res))
-		return NULL;
 
 	int32_t count = 0;
 	bt2ZipEntry *entries = bt2ZipList(zip, zipLen, &count);
 	if (entries == NULL)
-	{
-		free(zip);
-		*unreadable = true;
 		return NULL;
-	}
 
 	// allmods.txt (or else the first file)
 	int32_t pick = -1;
@@ -337,20 +327,14 @@ char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress,
 	size_t allLen = 0;
 	uint8_t *all = (entries[pick].size <= MAX_LIST_TEXT) ? bt2ZipExtract(zip, zipLen, &entries[pick], &allLen) : NULL;
 	free(entries);
-	free(zip);
-
 	if (all == NULL)
-	{
-		*unreadable = true;
 		return NULL;
-	}
 
 	// keep the Fasttracker 2 songs: "size<TAB>Fasttracker 2/Artist/song.xm" -> "size<TAB>Artist/song.xm"
 	char *out = (char *)malloc(allLen + 1);
 	if (out == NULL)
 	{
 		free(all);
-		*unreadable = true;
 		return NULL;
 	}
 
@@ -401,9 +385,17 @@ char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress,
 	if (o == 0)
 	{
 		free(out);
-		*unreadable = true;
 		return NULL;
 	}
+
+	*outLen = o;
+	return out;
+}
+
+void bt2ModlandSaveList(const char *text, size_t len)
+{
+	if (setup.listFile[0] == '\0')
+		return; // (the web version keeps the list in the browser's cache)
 
 	char dir[1024];
 	snprintf(dir, sizeof (dir), "%s", setup.listFile);
@@ -413,10 +405,30 @@ char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress,
 		*sep = '\0';
 		bt2FsMkdirs(dir);
 	}
-	bt2FsWriteReplace(setup.listFile, out, o); // (only the program's own list file)
+	bt2FsWriteReplace(setup.listFile, text, len); // (only the program's own list file)
+}
 
-	*outLen = o;
-	return out;
+char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress, void *ud, bt2NetResult *res, bool *unreadable, size_t *outLen)
+{
+	*unreadable = false;
+	*outLen = 0;
+
+	uint8_t *zip = NULL;
+	size_t zipLen = 0;
+	if (!bt2NetGet(setup.listUrl, MAX_LIST_ZIP, cancel, progress, ud, &zip, &zipLen, res))
+		return NULL;
+
+	char *text = bt2ModlandListFromZip(zip, zipLen, outLen);
+	free(zip);
+
+	if (text == NULL)
+	{
+		*unreadable = true;
+		return NULL;
+	}
+
+	bt2ModlandSaveList(text, *outLen);
+	return text;
 }
 
 static int SDLCALL refreshThread(void *arg)
@@ -605,16 +617,16 @@ static void numberedName(const char *name, bool dir, int32_t k, char *out, size_
 		snprintf(out, outLen, "%.*s (%d)%s", (int)(dot - name), name, (int)k, dot);
 }
 
-/* The names here: Modland's names made safe for this system (bt2CleanName), and different from each other in
-** each folder. On Windows "Song.xm" and "song.xm" (or "a?.xm" and "a_.xm") would be the same file, so the
-** second one is called "song (2).xm" here. A name that isn't UTF-8 is read as Windows letters (the web address
-** still uses Modland's own name).
+/* The names here: in the Windows program Modland's names made safe for Windows (bt2CleanName), and different from
+** each other in each folder: "Song.xm" and "song.xm" (or "a?.xm" and "a_.xm") would be the same file there, so the
+** second one is called "song (2).xm". Elsewhere (the web version) Modland's own names. A name that isn't UTF-8 is
+** read as Windows letters (the web address still uses Modland's own name).
 */
 static void makeLocalNames(void)
 {
 	localNamesLen = 0;
 
-	char raw[MAX_NAME + 1], utf[MAX_NAME * 3 + 8], clean[MAX_NAME + 8], name[MAX_NAME + 32];
+	char raw[MAX_NAME + 1], utf[MAX_NAME * 3 + 8], clean[MAX_NAME * 3 + 8], name[LOCAL_MAX];
 	for (int32_t d = 0; d < nodeCount; d++)
 	{
 		if (!nodes[d].dir || nodes[d].first < 0)
@@ -633,7 +645,11 @@ static void makeLocalNames(void)
 				src = utf;
 			}
 
+#ifdef _WIN32
 			bt2CleanName(src, clean, sizeof (clean), MAX_NAME);
+#else
+			snprintf(clean, sizeof (clean), "%s", src); // (Modland's own names: the web version always used them)
+#endif
 			snprintf(name, sizeof (name), "%s", clean);
 			for (int32_t k = 2; nameSetHas(&used, name) && k < 100000; k++)
 				numberedName(clean, nodes[c].dir, k, name, sizeof (name));
@@ -652,7 +668,7 @@ static void makeLocalNames(void)
 // path typed in "Set path")
 static int32_t childByLocalName(int32_t parent, const char *part, size_t partLen)
 {
-	char safe[MAX_NAME + 32];
+	char safe[LOCAL_MAX];
 	for (int32_t c = nodes[parent].first; c >= 0; c = nodes[c].next)
 	{
 		nodeSafeName(c, safe, sizeof (safe));
@@ -741,7 +757,7 @@ static void nodePath(int32_t node, bool safe, char *out, size_t outLen)
 	out[0] = '\0';
 	for (int32_t k = n - 1; k >= 0; k--)
 	{
-		char name[MAX_NAME + 32];
+		char name[LOCAL_MAX];
 		if (safe)
 			nodeSafeName(chain[k], name, sizeof (name));
 		else
@@ -764,7 +780,7 @@ static void populateNode(int32_t node, const char *dir) // (with the lock held)
 	nameSet there;
 	nameSetFill(&there, dir);
 
-	char path[2048], safe[MAX_NAME + 32];
+	char path[2048], safe[LOCAL_MAX];
 	for (int32_t c = nodes[node].first; c >= 0; c = nodes[c].next)
 	{
 		nodeSafeName(c, safe, sizeof (safe));
@@ -833,7 +849,7 @@ bool bt2ModlandMaterialize(const char *modlandPath, char *out, size_t outLen)
 
 	SDL_LockMutex(lock);
 
-	char dir[2048], safe[MAX_NAME + 32];
+	char dir[2048], safe[LOCAL_MAX];
 	snprintf(dir, sizeof (dir), "%s", setup.mirrorRoot);
 	bt2FsMkdirs(dir);
 
@@ -901,6 +917,146 @@ bool bt2ModlandOwnFolderFor(const char *mirrorDir, char *out, size_t outLen)
 	return true;
 }
 
+// ------------------------------------------------------------------------------------------------
+// a song (the same in the Windows program and the web version)
+
+// "<ownRoot>/Artist/song.xm" -> "BT2/Modland/Artist/song.xm" (for messages)
+static void ownForMessage(const char *ownPath, char *out, size_t outLen)
+{
+	const char *rel = bt2PathAfter(ownPath, setup.ownRoot);
+	if (rel == NULL)
+		rel = ownPath;
+
+	snprintf(out, outLen, "BT2/Modland%s%s", (rel[0] != '\0') ? "/" : "", rel);
+	for (char *p = out; *p != '\0'; p++)
+	{
+		if (*p == '\\')
+			*p = '/';
+	}
+}
+
+static void makeParentDirs(const char *path)
+{
+	char dir[2048];
+	snprintf(dir, sizeof (dir), "%s", path);
+
+	char *cut = NULL;
+	for (char *p = dir; *p != '\0'; p++)
+	{
+		if (isSepChar(*p))
+			cut = p;
+	}
+
+	if (cut != NULL)
+	{
+		*cut = '\0';
+		bt2FsMkdirs(dir);
+	}
+}
+
+// the user's own copy: a new file, or over an empty one (never over a file with anything in it)
+static bool writeOwnCopy(const char *ownPath, const uint8_t *data, size_t len)
+{
+	makeParentDirs(ownPath);
+
+	bt2FileInfo info;
+	if (bt2FsInfo(ownPath, &info))
+	{
+		if (info.isDir || info.size != 0)
+			return false;
+
+		return bt2FsWriteReplace(ownPath, data, len);
+	}
+
+	return bt2FsWriteNew(ownPath, data, len);
+}
+
+static void savedMessage(const char *ownPath, bool saved, char *msg, size_t msgLen)
+{
+	char rel[2200];
+	ownForMessage(ownPath, rel, sizeof (rel));
+	snprintf(msg, msgLen, saved ? "Lagret i %s" : "Kunne ikke lagre i %s", rel);
+}
+
+int32_t bt2ModlandPrepareSong(const char *file, bt2ModlandSong *song, char *msg, size_t msgLen)
+{
+	if (msgLen > 0)
+		msg[0] = '\0';
+
+	memset(song, 0, sizeof (bt2ModlandSong));
+	snprintf(song->file, sizeof (song->file), "%s", file);
+
+	bt2FileInfo info;
+	if (!bt2ModlandIsMirrorPath(file) || !bt2FsInfo(file, &info) || info.isDir)
+		return BT2_SONG_NOT_MODLAND;
+
+	if (!bt2ModlandResolve(file, song->modlandPath, sizeof (song->modlandPath), song->ownPath, sizeof (song->ownPath)))
+		return BT2_SONG_NOT_MODLAND; // (not on the list: opened as it is)
+
+	// the user's own copy is there: it is what is opened (its contents in Modland's folder, which is only the program's copy)
+	bt2FileInfo own;
+	if (bt2FsInfo(song->ownPath, &own) && !own.isDir && own.size > 0)
+	{
+		size_t len = 0;
+		uint8_t *data = bt2FsReadAll(song->ownPath, &len, MAX_SONG_SIZE);
+		if (data == NULL)
+			return BT2_SONG_OPEN; // (too big to copy, or unreadable: Modland's folder as it is)
+
+		size_t curLen = 0;
+		uint8_t *cur = (info.size == (int64_t)len) ? bt2FsReadAll(file, &curLen, MAX_SONG_SIZE) : NULL;
+		const bool same = (cur != NULL && curLen == len && memcmp(cur, data, len) == 0);
+		free(cur);
+
+		const bool ok = same || bt2FsWriteReplace(file, data, len);
+		free(data);
+
+		if (!ok)
+		{
+			snprintf(msg, msgLen, "Kunne ikke \xC3\xA5pne filen");
+			return BT2_SONG_FAILED;
+		}
+
+		return BT2_SONG_OPEN;
+	}
+
+	// it came before (the user's copy has been deleted or moved since): a new copy of it
+	if (info.size > 0)
+	{
+		size_t len = 0;
+		uint8_t *data = bt2FsReadAll(file, &len, MAX_SONG_SIZE);
+		if (data != NULL)
+			savedMessage(song->ownPath, writeOwnCopy(song->ownPath, data, len), msg, msgLen);
+		free(data);
+		return BT2_SONG_OPEN;
+	}
+
+	// the first time: it is downloaded
+	const char *name = strrchr(song->modlandPath, '/');
+	name = (name != NULL) ? name + 1 : song->modlandPath;
+	snprintf(song->label, sizeof (song->label), "Henter \xC2\xAB%.400s\xC2\xBB fra Modland", name);
+	bt2ModlandFileUrl(song->modlandPath, song->url, sizeof (song->url));
+	return BT2_SONG_DOWNLOAD;
+}
+
+bool bt2ModlandStoreSong(const bt2ModlandSong *song, const uint8_t *data, size_t len, bool *ownSaved)
+{
+	// the user's own copy (kept, and used from then on - also without internet)
+	*ownSaved = writeOwnCopy(song->ownPath, data, len);
+
+	// and the song in Modland's folder (it was an empty file)
+	return bt2FsWriteReplace(song->file, data, len);
+}
+
+void bt2ModlandStoredMessage(const bt2ModlandSong *song, bool ownSaved, char *msg, size_t msgLen)
+{
+	savedMessage(song->ownPath, ownSaved, msg, msgLen);
+}
+
+size_t bt2ModlandMaxSongSize(void)
+{
+	return MAX_SONG_SIZE;
+}
+
 void bt2ModlandFileUrl(const char *modlandPath, char *out, size_t outLen)
 {
 	char enc[6000];
@@ -928,5 +1084,3 @@ void bt2ModlandShutdown(void)
 {
 	stopping = 1; // (a background download of the list stops; nothing is freed, it may still be running)
 }
-
-#endif

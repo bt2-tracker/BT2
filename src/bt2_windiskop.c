@@ -37,7 +37,6 @@
 #pragma comment(lib, "comdlg32.lib")
 #endif
 
-#define MAX_SONG_SIZE (256u * 1024 * 1024)
 
 static bool ready;
 static wchar_t homeW[MAX_PATH], mirrorW[MAX_PATH];
@@ -344,7 +343,7 @@ bool bt2ModlandOpen(void)
 typedef struct songJob_t
 {
 	volatile int32_t cancel;
-	char url[6200], ownPath[2048], placeholder[2048], label[800];
+	bt2ModlandSong song;
 	bt2NetResult res;
 	bool writeFailed, ownSaved;
 } songJob;
@@ -352,36 +351,7 @@ typedef struct songJob_t
 static void songProgress(void *ud, uint64_t got, uint64_t total)
 {
 	songJob *j = (songJob *)ud;
-	showProgress(j->label, got, total);
-}
-
-static void makeParentDirs(const char *path)
-{
-	char dir[2048];
-	snprintf(dir, sizeof (dir), "%s", path);
-	char *cut = strrchr(dir, '\\');
-	if (cut != NULL)
-	{
-		*cut = '\0';
-		bt2FsMkdirs(dir);
-	}
-}
-
-// the user's own copy of a Modland song: a new file, or over an empty one (never over a file with anything in it)
-static bool writeOwnCopy(const char *ownPath, const uint8_t *data, size_t len)
-{
-	makeParentDirs(ownPath);
-
-	bt2FileInfo info;
-	if (bt2FsInfo(ownPath, &info))
-	{
-		if (info.isDir || info.size != 0)
-			return false;
-
-		return bt2FsWriteReplace(ownPath, data, len);
-	}
-
-	return bt2FsWriteNew(ownPath, data, len);
+	showProgress(j->song.label, got, total);
 }
 
 static int32_t songJobRun(void *arg)
@@ -390,14 +360,10 @@ static int32_t songJobRun(void *arg)
 
 	uint8_t *data = NULL;
 	size_t len = 0;
-	if (!bt2NetGet(j->url, MAX_SONG_SIZE, &j->cancel, songProgress, j, &data, &len, &j->res))
+	if (!bt2NetGet(j->song.url, bt2ModlandMaxSongSize(), &j->cancel, songProgress, j, &data, &len, &j->res))
 		return 0;
 
-	// the user's own copy (kept, and used from then on - also without internet)
-	j->ownSaved = writeOwnCopy(j->ownPath, data, len);
-
-	// and the song in Modland's folder (it was an empty file)
-	const bool ok = bt2FsWriteReplace(j->placeholder, data, len);
+	const bool ok = bt2ModlandStoreSong(&j->song, data, len, &j->ownSaved); // (the user's own copy, and Modland's folder)
 	free(data);
 
 	if (!ok)
@@ -406,19 +372,7 @@ static int32_t songJobRun(void *arg)
 	return ok ? 1 : 0;
 }
 
-static void savedToast(const char *ownPath, bool saved)
-{
-	char rel[2048], msg[2200];
-	homeRelative(ownPath, rel, sizeof (rel));
-	snprintf(msg, sizeof (msg), saved ? "Lagret i %s" : "Kunne ikke lagre i %s", rel);
-	bt2Toast(msg);
-}
-
-/* A song in Modland's folders, before FT2 opens it:
-** - the user's own copy (BT2/Modland/...) is there: it is what is opened - also after it was changed and saved,
-**   and without internet (its contents are put in Modland's folder, which is only the program's own copy)
-** - else the song is downloaded the first time (and kept as the user's own copy)
-*/
+// a song in Modland's folders, before FT2 opens it (the rules are in bt2ModlandPrepareSong, the same as in the web version)
 bool bt2PrepareFile(const UNICHAR *pathU)
 {
 	if (!ready || pathU == NULL)
@@ -447,61 +401,27 @@ bool bt2PrepareFile(const UNICHAR *pathU)
 	}
 
 	songJob *j = (songJob *)calloc(1, sizeof (songJob));
-	char modlandPath[2048];
-	if (j == NULL || !bt2ModlandResolve(file, modlandPath, sizeof (modlandPath), j->ownPath, sizeof (j->ownPath)))
+	if (j == NULL)
 	{
-		free(j);
 		free(file);
-		return true; // (not on the list: opened as it is)
-	}
-
-	snprintf(j->placeholder, sizeof (j->placeholder), "%s", file);
-	free(file);
-
-	// the user's own copy is there: it is what is opened
-	bt2FileInfo own;
-	if (bt2FsInfo(j->ownPath, &own) && !own.isDir && own.size > 0)
-	{
-		size_t len = 0;
-		uint8_t *data = bt2FsReadAll(j->ownPath, &len, MAX_SONG_SIZE);
-		bool ok = true;
-		if (data != NULL)
-		{
-			size_t curLen = 0;
-			uint8_t *cur = (info.size == (int64_t)len) ? bt2FsReadAll(j->placeholder, &curLen, MAX_SONG_SIZE) : NULL;
-			const bool same = (cur != NULL && curLen == len && memcmp(cur, data, len) == 0);
-			free(cur);
-
-			if (!same)
-				ok = bt2FsWriteReplace(j->placeholder, data, len);
-		}
-		free(data);
-		free(j);
-
-		if (!ok)
-			bt2Toast("Kunne ikke \xC3\xA5pne filen");
-		return ok;
-	}
-
-	// it came before (the user's copy has been deleted or moved since): a new copy of it
-	if (info.size > 0)
-	{
-		size_t len = 0;
-		uint8_t *data = bt2FsReadAll(j->placeholder, &len, MAX_SONG_SIZE);
-		if (data != NULL)
-			savedToast(j->ownPath, writeOwnCopy(j->ownPath, data, len));
-		free(data);
-		free(j);
 		return true;
 	}
 
-	// the first time: downloaded
-	const char *name = strrchr(modlandPath, '/');
-	name = (name != NULL) ? name + 1 : modlandPath;
-	snprintf(j->label, sizeof (j->label), "Henter \xC2\xAB%s\xC2\xBB fra Modland", name);
-	bt2ModlandFileUrl(modlandPath, j->url, sizeof (j->url));
+	char msg[2400];
+	const int32_t what = bt2ModlandPrepareSong(file, &j->song, msg, sizeof (msg));
+	free(file);
 
-	showProgress(j->label, 0, 0);
+	if (msg[0] != '\0')
+		bt2Toast(msg);
+
+	if (what != BT2_SONG_DOWNLOAD)
+	{
+		free(j);
+		return what != BT2_SONG_FAILED;
+	}
+
+	// the first time: downloaded, with the download box
+	showProgress(j->song.label, 0, 0);
 	int32_t ok = 0;
 	const bool ran = bt2RunJob(songJobRun, j, &j->cancel, &ok);
 	bt2NetBoxHide();
@@ -510,7 +430,6 @@ bool bt2PrepareFile(const UNICHAR *pathU)
 
 	if (!ok)
 	{
-		char msg[512];
 		if (j->writeFailed || j->res.error == BT2_NET_OK)
 			snprintf(msg, sizeof (msg), "Kunne ikke lagre filen");
 		else
@@ -523,7 +442,8 @@ bool bt2PrepareFile(const UNICHAR *pathU)
 		return false;
 	}
 
-	savedToast(j->ownPath, j->ownSaved);
+	bt2ModlandStoredMessage(&j->song, j->ownSaved, msg, sizeof (msg));
+	bt2Toast(msg);
 	free(j);
 	return true;
 }

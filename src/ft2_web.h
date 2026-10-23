@@ -51,9 +51,7 @@ void webSyncFiles(void);
 // (Disk Op.'s Modland and folder rules: bt2_diskop.h, the same as in the Windows program)
 void webHandlePageRequests(void);   // in the main loop: requests from the page (e.g. "show this folder" from the search window)
 
-// Modland (online library)
+// Modland (online library): the folders are in memory only (bt2_modland.c, the same as in the Windows program)
 #define WEB_MODLAND_ROOT "/Modland"
-#define WEB_MODLAND_SEARCH_DIR "/Modland/~Search results"
-int32_t webModlandSearch(const char *query); // number of hits (in WEB_MODLAND_SEARCH_DIR), -1 = failed
 
 #endif

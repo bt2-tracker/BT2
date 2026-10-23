@@ -141,6 +141,65 @@ static void entryName(const bt2ZipEntry *e, char *out, size_t outLen)
 		bt2Cp1252ToUtf8(e->name, out, outLen);
 }
 
+#define MAX_NAME_LETTERS 200 // in one name (counted like the web version always did: UTF-16 units)
+#define NAME_LEN 1024        // (room for 200 letters in UTF-8, and a '_' in front)
+
+// the bytes in the first maxUnits letters of s (whole letters; one outside the BMP counts as 2), and how many there were
+static size_t lettersPrefix(const char *s, size_t maxUnits, size_t *units)
+{
+	const uint8_t *p = (const uint8_t *)s;
+	size_t i = 0, u = 0;
+	while (p[i] != '\0')
+	{
+		size_t n = 1;
+		if (p[i] >= 0xC0)
+		{
+			while (n < 4 && (p[i + n] & 0xC0) == 0x80)
+				n++;
+		}
+
+		const size_t w = (n == 4) ? 2 : 1;
+		if (u + w > maxUnits)
+			break;
+
+		u += w;
+		i += n;
+	}
+
+	if (units != NULL)
+		*units = u;
+	return i;
+}
+
+/* A name from outside (a file, a zip file's folder or file) made safe here (bt2CleanName). A name with more than 200
+** letters is shortened; a file keeps its ending (".xm"), so FT2 still knows what it is.
+*/
+static void importName(const char *raw, bool isFile, char *out, size_t outLen)
+{
+	char cut[NAME_LEN];
+	size_t units = 0;
+	lettersPrefix(raw, (size_t)-1, &units);
+
+	if (units <= MAX_NAME_LETTERS)
+	{
+		snprintf(cut, sizeof (cut), "%s", raw);
+	}
+	else
+	{
+		const char *dot = isFile ? strrchr(raw, '.') : NULL;
+		size_t endUnits = 0;
+		if (dot != NULL && (dot == raw || strlen(dot) > 16))
+			dot = NULL; // (no ending, or not one)
+		if (dot != NULL)
+			lettersPrefix(dot, (size_t)-1, &endUnits);
+
+		const size_t stem = lettersPrefix(raw, MAX_NAME_LETTERS - endUnits, NULL);
+		snprintf(cut, sizeof (cut), "%.*s%s", (int)stem, raw, (dot != NULL) ? dot : "");
+	}
+
+	bt2CleanName(cut, out, outLen, outLen);
+}
+
 // "a/b/c.xm" -> "a\b\c.xm" here, every part made safe; empty parts, "." and ".." are left out. false = nothing left
 static bool safeRelPath(const char *name, char *out, size_t outLen)
 {
@@ -153,12 +212,12 @@ static bool safeRelPath(const char *name, char *out, size_t outLen)
 		const char *e = strchr(p, '/');
 		const size_t len = (e != NULL) ? (size_t)(e - p) : strlen(p);
 
-		if (len > 0 && !(len == 1 && p[0] == '.') && !(len == 2 && p[0] == '.' && p[1] == '.') && len < 1024)
+		if (len > 0 && !(len == 1 && p[0] == '.') && !(len == 2 && p[0] == '.' && p[1] == '.') && len < NAME_LEN)
 		{
-			char raw[1024], clean[256];
+			char raw[NAME_LEN], clean[NAME_LEN];
 			memcpy(raw, p, len);
 			raw[len] = '\0';
-			bt2CleanName(raw, clean, sizeof (clean), 200);
+			importName(raw, e == NULL, clean, sizeof (clean)); // (the last part is the file)
 
 			const int32_t w = snprintf(out + o, outLen - o, "%s%s", (o > 0) ? BT2_SEP_STR : "", clean);
 			if (w < 0 || (size_t)w >= outLen - o)
@@ -248,272 +307,440 @@ static bool isBackup(const bt2ZipEntry *entries, int32_t count)
 	return count > 0;
 }
 
-// a backup zip: the files back where they were. Returns the number put back.
-static int32_t restoreBackup(importCtx *c, const uint8_t *zip, size_t zipLen, const bt2ZipEntry *entries, int32_t count, const char *userRoot)
+struct bt2Import_t
 {
-	int32_t restored = 0, failed = 0;
+	importCtx c;
+	char dir[PATH_LEN], userRoot[PATH_LEN], firstFile[PATH_LEN];
+	bool dirIsHere;
+	int32_t n, zips, backups, errors, given, copiesGiven;
+};
 
-	for (int32_t i = 0; i < count && !stopped(c); i++)
+struct bt2ImportZip_t
+{
+	bt2Import *im;
+	const bt2ZipEntry *entries;
+	int32_t count;
+	bool backup;
+	bool broken;                         // (unpacking: the rest of this zip file is not unpacked, like the web version always did)
+	int32_t restored, failed;            // (a backup)
+	char name[NAME_LEN], base[PATH_LEN]; // the zip file's name, and the new folder it is unpacked in
+};
+
+bt2Import *bt2ImportBegin(const char *dir, const char *userRoot, bool dirIsHere, bt2ToastFunc toast,
+	bt2ImportProgressFunc progress, void *ud, volatile int32_t *cancel, int32_t count)
+{
+	bt2Import *im = (bt2Import *)calloc(1, sizeof (bt2Import));
+	if (im == NULL)
+		return NULL;
+
+	im->c.toast = toast;
+	im->c.progress = progress;
+	im->c.ud = ud;
+	im->c.cancel = cancel;
+	im->c.count = count;
+	snprintf(im->dir, sizeof (im->dir), "%s", dir);
+	snprintf(im->userRoot, sizeof (im->userRoot), "%s", userRoot);
+	im->dirIsHere = dirIsHere;
+	return im;
+}
+
+static void cantImport(bt2Import *im, const char *name)
+{
+	char msg[1200];
+	snprintf(msg, sizeof (msg), "Kunne ikke importere %s", name);
+	im->c.toast(msg);
+	im->errors++;
+}
+
+bt2ImportZip *bt2ImportZipBegin(bt2Import *im, const char *zipName, const bt2ZipEntry *entries, int32_t count)
+{
+	if (im == NULL)
+		return NULL;
+
+	importCtx *c = &im->c;
+	zipName = baseName(zipName);
+	c->file = im->given++;
+
+	if (stopped(c))
+		return NULL;
+
+	progressTo(c, 0.0);
+
+	bt2ImportZip *z = (entries != NULL && count > 0) ? (bt2ImportZip *)calloc(1, sizeof (bt2ImportZip)) : NULL;
+	if (z == NULL)
 	{
-		const bt2ZipEntry *e = &entries[i];
-		progressTo(c, (double)i / count);
-		if (e->dir || strncmp(e->name, "BT2/", 4) != 0) // (the settings are not put back)
-			continue;
+		cantImport(im, zipName); // (not a zip file we can read)
+		return NULL;
+	}
 
-		char name[1024], rel[PATH_LEN], dest[PATH_LEN];
-		entryName(e, name, sizeof (name));
-		if (!safeRelPath(name + 4, rel, sizeof (rel)))
-			continue;
+	z->im = im;
+	z->entries = entries;
+	z->count = count;
+	snprintf(z->name, sizeof (z->name), "%s", zipName);
 
-		bt2PathJoin(dest, sizeof (dest), userRoot, rel);
+	// a backup (everything under "BT2/", from "Sikkerhetskopi (zip)"): the files back where they were
+	z->backup = isBackup(entries, count);
+	if (z->backup)
+	{
+		im->backups++;
+	}
+	else
+	{
+		// else unpacked, with its folders, into a new folder with the zip file's name
+		im->zips++;
+
+		char folderName[NAME_LEN], clean[NAME_LEN], tmp[PATH_LEN];
+		const size_t len = strlen(zipName);
+		snprintf(folderName, sizeof (folderName), "%.*s", (int)(endsWithNoCase(zipName, ".zip") ? len - 4 : len), zipName);
+		importName(folderName, false, clean, sizeof (clean));
+		bt2PathJoin(tmp, sizeof (tmp), im->dir, clean);
+		if (!bt2UniquePath(tmp, z->base, sizeof (z->base)))
+			z->broken = true;
+	}
+
+	return z;
+}
+
+bool bt2ImportZipWants(bt2ImportZip *z, int32_t i)
+{
+	if (z == NULL || i < 0 || i >= z->count || z->broken)
+		return false;
+
+	importCtx *c = &z->im->c;
+	if (stopped(c))
+		return false;
+
+	progressTo(c, (double)i / z->count);
+
+	const bt2ZipEntry *e = &z->entries[i];
+	char name[NAME_LEN], rel[PATH_LEN];
+	entryName(e, name, sizeof (name));
+
+	if (z->backup)
+	{
+		// (the settings, "Innstillinger/", are not put back)
+		if (e->dir || strncmp(e->name, "BT2/", 4) != 0 || !safeRelPath(name + 4, rel, sizeof (rel)))
+			return false;
 
 		if (e->size > MAX_IMPORT_SIZE)
 		{
-			failed++;
-			continue;
+			z->failed++;
+			return false;
 		}
 
-		size_t len = 0;
-		uint8_t *content = bt2ZipExtract(zip, zipLen, e, &len);
-		if (content == NULL)
+		return true;
+	}
+
+	if (e->dir || isJunk(name) || !safeRelPath(name, rel, sizeof (rel)))
+		return false;
+
+	if (e->size > MAX_IMPORT_SIZE)
+	{
+		z->broken = true; // (like the web version: the rest of this zip file is not unpacked)
+		return false;
+	}
+
+	return room(c, z->im->dir, e->size); // (else the import stops)
+}
+
+// a backup: the file back where it was. Files that are there are left alone (one with other contents comes in as "name (2)").
+static void restoreEntry(bt2ImportZip *z, const bt2ZipEntry *e, const uint8_t *content, size_t len)
+{
+	bt2Import *im = z->im;
+	importCtx *c = &im->c;
+
+	char name[NAME_LEN], rel[PATH_LEN], dest[PATH_LEN];
+	entryName(e, name, sizeof (name));
+	if (!safeRelPath(name + 4, rel, sizeof (rel)))
+		return;
+
+	bt2PathJoin(dest, sizeof (dest), im->userRoot, rel);
+
+	if (content == NULL)
+	{
+		z->failed++;
+		return;
+	}
+
+	bt2FileInfo info;
+	if (bt2FsInfo(dest, &info))
+	{
+		if (!info.isDir && info.size == (int64_t)len && sameContents(dest, content, len))
+			return; // (the same file)
+
+		if (!info.isDir && info.size == 0) // an empty file (a demo song that was never opened)
 		{
-			failed++;
-			continue;
-		}
+			if (!room(c, im->userRoot, len))
+				return;
 
-		bool done = false;
-		bt2FileInfo info;
-		if (bt2FsInfo(dest, &info))
-		{
-			if (!info.isDir && info.size == (int64_t)len && sameContents(dest, content, len))
+			if (bt2FsWriteReplace(dest, content, len))
 			{
-				free(content);
-				continue; // (the same file)
-			}
-
-			if (!info.isDir && info.size == 0) // an empty file (a demo song that was never opened)
-			{
-				if (!room(c, userRoot, len))
-				{
-					free(content);
-					break;
-				}
-
-				if (bt2FsWriteReplace(dest, content, len))
-				{
-					restored++;
-					c->written += len;
-				}
-				else
-				{
-					failed++;
-				}
-				done = true;
-			}
-			else
-			{
-				// a free "name (2)" ... - unless one of those already has these contents (the same backup again)
-				char unique[PATH_LEN];
-				if (!sameCopyOrFreeName(dest, content, len, unique, sizeof (unique)))
-				{
-					free(content);
-					continue; // (it is there)
-				}
-				snprintf(dest, sizeof (dest), "%s", unique);
-			}
-		}
-
-		if (!done)
-		{
-			if (!room(c, userRoot, len))
-			{
-				free(content);
-				break;
-			}
-
-			makeParentDirs(dest);
-			if (bt2FsWriteNew(dest, content, len))
-			{
-				restored++;
+				z->restored++;
 				c->written += len;
 			}
 			else
 			{
-				failed++;
+				z->failed++;
 			}
+			return;
 		}
 
-		free(content);
+		// a free "name (2)" ... - unless one of those already has these contents (the same backup again)
+		char unique[PATH_LEN];
+		if (!sameCopyOrFreeName(dest, content, len, unique, sizeof (unique)))
+			return; // (it is there)
+		snprintf(dest, sizeof (dest), "%s", unique);
 	}
 
-	if (c->stop == 0)
+	if (!room(c, im->userRoot, len))
+		return;
+
+	makeParentDirs(dest);
+	if (bt2FsWriteNew(dest, content, len))
 	{
-		char msg[256];
-		const char *files = (restored == 1) ? "fil" : "filer";
-		if (failed > 0)
-			snprintf(msg, sizeof (msg), "Sikkerhetskopi: %d %s lagt tilbake i BT2 (%d kunne ikke leses)", (int)restored, files, (int)failed);
-		else
-			snprintf(msg, sizeof (msg), "Sikkerhetskopi: %d %s lagt tilbake i BT2", (int)restored, files);
-		c->toast(msg);
+		z->restored++;
+		c->written += len;
 	}
-
-	return restored;
+	else
+	{
+		z->failed++;
+	}
 }
 
-int32_t bt2ImportFiles(const char *const *paths, int32_t count, const char *dir, const char *userRoot, bool dirIsHere,
-	bt2ToastFunc toast, bt2ImportProgressFunc progress, void *ud, volatile int32_t *cancel)
+// a zip file that isn't a backup: the file, with its folders, in the new folder (never over a file that is there)
+static void unpackEntry(bt2ImportZip *z, const bt2ZipEntry *e, const uint8_t *content, size_t len)
 {
-	importCtx c;
-	memset(&c, 0, sizeof (c));
-	c.toast = toast;
-	c.progress = progress;
-	c.ud = ud;
-	c.cancel = cancel;
-	c.count = count;
+	bt2Import *im = z->im;
 
-	int32_t n = 0, zips = 0, backups = 0, errors = 0;
+	char name[NAME_LEN], rel[PATH_LEN], tmp[PATH_LEN], dest[PATH_LEN];
+	entryName(e, name, sizeof (name));
+	if (!safeRelPath(name, rel, sizeof (rel)))
+		return;
 
-	for (int32_t f = 0; f < count && !stopped(&c); f++)
+	bt2PathJoin(tmp, sizeof (tmp), z->base, rel);
+	if (content == NULL || !bt2UniquePath(tmp, dest, sizeof (dest)))
 	{
-		const char *name = baseName(paths[f]);
-		char msg[1200];
-		c.file = f;
-		progressTo(&c, 0.0);
+		z->broken = true; // (like the web version: the rest of this zip file is not unpacked)
+		return;
+	}
 
-		size_t len = 0;
-		uint8_t *data = bt2FsReadAll(paths[f], &len, MAX_IMPORT_SIZE);
-		if (data == NULL)
-		{
-			snprintf(msg, sizeof (msg), "Kunne ikke importere %s", name);
-			toast(msg);
-			errors++;
-			continue;
-		}
+	makeParentDirs(dest);
+	if (!bt2FsWriteNew(dest, content, len))
+	{
+		z->broken = true;
+		return;
+	}
 
-		bool failed = false;
-		if (endsWithNoCase(name, ".zip"))
+	im->n++;
+	im->c.written += len;
+}
+
+void bt2ImportZipEntry(bt2ImportZip *z, int32_t i, const uint8_t *data, size_t len)
+{
+	if (z == NULL || i < 0 || i >= z->count || z->broken || stopped(&z->im->c))
+		return;
+
+	if (z->backup)
+		restoreEntry(z, &z->entries[i], data, len);
+	else
+		unpackEntry(z, &z->entries[i], data, len);
+}
+
+void bt2ImportZipEnd(bt2ImportZip *z)
+{
+	if (z == NULL)
+		return;
+
+	bt2Import *im = z->im;
+	importCtx *c = &im->c;
+
+	if (z->backup)
+	{
+		im->n += z->restored;
+		if (c->stop == 0)
 		{
-			int32_t entryCount = 0;
-			bt2ZipEntry *entries = bt2ZipList(data, len, &entryCount);
-			if (entries == NULL)
-			{
-				failed = true;
-			}
-			else if (isBackup(entries, entryCount))
-			{
-				n += restoreBackup(&c, data, len, entries, entryCount, userRoot);
-				backups++;
-			}
+			char msg[256];
+			const char *files = (z->restored == 1) ? "fil" : "filer";
+			if (z->failed > 0)
+				snprintf(msg, sizeof (msg), "Sikkerhetskopi: %d %s lagt tilbake i BT2 (%d kunne ikke leses)", (int)z->restored, files, (int)z->failed);
 			else
-			{
-				// unpacked, with its folders, into a new folder with the zip file's name
-				char folderName[1024], clean[256], base[PATH_LEN], tmp[PATH_LEN];
-				snprintf(folderName, sizeof (folderName), "%.*s", (int)(strlen(name) - 4), name);
-				bt2CleanName(folderName, clean, sizeof (clean), 200);
-				bt2PathJoin(tmp, sizeof (tmp), dir, clean);
-				if (!bt2UniquePath(tmp, base, sizeof (base)))
-					failed = true;
-
-				for (int32_t i = 0; i < entryCount && !failed && !stopped(&c); i++)
-				{
-					const bt2ZipEntry *e = &entries[i];
-					progressTo(&c, (double)i / entryCount);
-
-					char ename[1024], rel[PATH_LEN], dest[PATH_LEN];
-					entryName(e, ename, sizeof (ename));
-					if (e->dir || isJunk(ename) || !safeRelPath(ename, rel, sizeof (rel)))
-						continue;
-
-					if (e->size > MAX_IMPORT_SIZE)
-					{
-						failed = true; // (like the web version: the rest of this zip file is not unpacked)
-						break;
-					}
-
-					if (!room(&c, dir, e->size))
-						break;
-
-					bt2PathJoin(tmp, sizeof (tmp), base, rel);
-					if (!bt2UniquePath(tmp, dest, sizeof (dest)))
-					{
-						failed = true;
-						break;
-					}
-
-					size_t elen = 0;
-					uint8_t *content = bt2ZipExtract(data, len, e, &elen);
-					if (content == NULL)
-					{
-						failed = true; // (like the web version: the rest of this zip file is not unpacked)
-						break;
-					}
-
-					makeParentDirs(dest);
-					if (bt2FsWriteNew(dest, content, elen))
-					{
-						n++;
-						c.written += elen;
-					}
-					else
-					{
-						failed = true;
-					}
-					free(content);
-				}
-
-				zips++;
-			}
-
-			free(entries);
+				snprintf(msg, sizeof (msg), "Sikkerhetskopi: %d %s lagt tilbake i BT2", (int)z->restored, files);
+			c->toast(msg);
 		}
-		else if (room(&c, dir, len))
-		{
-			char clean[256], tmp[PATH_LEN], dest[PATH_LEN];
-			bt2CleanName(name, clean, sizeof (clean), 200);
-			bt2PathJoin(tmp, sizeof (tmp), dir, clean);
+	}
+	else if (z->broken)
+	{
+		cantImport(im, z->name);
+	}
 
-			if (bt2UniquePath(tmp, dest, sizeof (dest)) && bt2FsWriteNew(dest, data, len))
-			{
-				n++;
-				c.written += len;
-			}
-			else
-			{
-				failed = true;
-			}
+	free(z);
+}
+
+void bt2ImportData(bt2Import *im, const char *name, const uint8_t *data, size_t len)
+{
+	if (im == NULL)
+		return;
+
+	name = baseName(name);
+
+	// a zip file: one file in it at a time
+	if (data != NULL && len <= MAX_IMPORT_SIZE && endsWithNoCase(name, ".zip"))
+	{
+		int32_t count = 0;
+		bt2ZipEntry *entries = bt2ZipList(data, len, &count);
+		bt2ImportZip *z = bt2ImportZipBegin(im, name, entries, count);
+		for (int32_t i = 0; z != NULL && i < count; i++)
+		{
+			if (!bt2ImportZipWants(z, i))
+				continue;
+
+			size_t elen = 0;
+			uint8_t *content = bt2ZipExtract(data, len, &entries[i], &elen);
+			bt2ImportZipEntry(z, i, content, elen);
+			free(content);
 		}
 
-		free(data);
+		bt2ImportZipEnd(z);
+		free(entries);
+		return;
+	}
 
-		if (failed)
+	importCtx *c = &im->c;
+	c->file = im->given++;
+
+	if (stopped(c))
+		return;
+
+	progressTo(c, 0.0);
+
+	if (data == NULL || len > MAX_IMPORT_SIZE)
+	{
+		cantImport(im, name);
+		return;
+	}
+
+	if (!room(c, im->dir, len))
+		return;
+
+	char clean[NAME_LEN], tmp[PATH_LEN], dest[PATH_LEN];
+	importName(name, true, clean, sizeof (clean));
+	bt2PathJoin(tmp, sizeof (tmp), im->dir, clean);
+
+	if (bt2UniquePath(tmp, dest, sizeof (dest)) && bt2FsWriteNew(dest, data, len))
+	{
+		im->n++;
+		c->written += len;
+		if (im->firstFile[0] == '\0')
+			snprintf(im->firstFile, sizeof (im->firstFile), "%s", dest);
+	}
+	else
+	{
+		cantImport(im, name);
+	}
+}
+
+void bt2ImportCopy(bt2Import *im, const char *relPath, const uint8_t *data, size_t len)
+{
+	if (im == NULL)
+		return;
+
+	importCtx *c = &im->c;
+	c->file = im->given++;
+	im->copiesGiven++;
+
+	if (stopped(c))
+		return;
+
+	progressTo(c, 0.0);
+
+	// the folders from the dropped folder, every part made safe ("a/b/c.xm"); never over a file that is there
+	char rel[PATH_LEN], tmp[PATH_LEN], dest[PATH_LEN];
+	if (data == NULL || len > MAX_IMPORT_SIZE || !safeRelPath(relPath, rel, sizeof (rel)))
+	{
+		cantImport(im, baseName(relPath));
+		return;
+	}
+
+	if (!room(c, im->dir, len))
+		return;
+
+	bt2PathJoin(tmp, sizeof (tmp), im->dir, rel);
+	if (bt2UniquePath(tmp, dest, sizeof (dest)))
+	{
+		makeParentDirs(dest);
+		if (bt2FsWriteNew(dest, data, len))
 		{
-			snprintf(msg, sizeof (msg), "Kunne ikke importere %s", name);
-			toast(msg);
-			errors++;
+			im->n++;
+			c->written += len;
+			if (im->firstFile[0] == '\0')
+				snprintf(im->firstFile, sizeof (im->firstFile), "%s", dest);
+			return;
 		}
 	}
 
-	if (progress != NULL)
-		progress(ud, 1.0);
+	cantImport(im, baseName(relPath));
+}
+
+const char *bt2ImportFirstFile(const bt2Import *im)
+{
+	return (im != NULL) ? im->firstFile : "";
+}
+
+int32_t bt2ImportEnd(bt2Import *im)
+{
+	if (im == NULL)
+		return 0;
+
+	importCtx *c = &im->c;
+	const int32_t n = im->n;
+	if (c->progress != NULL)
+		c->progress(c->ud, 1.0);
 
 	char msg[256];
 	const char *files = (n == 1) ? "fil" : "filer";
 
 	// stopped: why, and how far it came
-	if (c.stop == STOP_FULL || c.stop == STOP_TOO_MUCH)
+	if (c->stop == STOP_FULL || c->stop == STOP_TOO_MUCH)
 	{
 		snprintf(msg, sizeof (msg), "Importen ble stoppet: %s (importerte %d %s)",
-			(c.stop == STOP_FULL) ? "ikke nok plass p\xC3\xA5 disken" : "mer enn 4 GB", (int)n, files);
-		toast(msg);
-		return n;
+			(c->stop == STOP_FULL) ? "ikke nok plass p\xC3\xA5 disken" : "mer enn 4 GB", (int)n, files);
+		c->toast(msg);
+	}
+	else if (c->stop == STOP_CANCEL || (n == 0 && im->errors > 0) ||
+		(im->backups > 0 && im->backups == im->given - im->copiesGiven && im->copiesGiven == 0))
+	{
+		// (no summary: it would only hide the message above - backups, or nothing imported because of an error)
+	}
+	else if (im->copiesGiven == im->given)
+	{
+		snprintf(msg, sizeof (msg), "Kopierte %d %s", (int)n, files); // (a dropped folder)
+		c->toast(msg);
+	}
+	else
+	{
+		snprintf(msg, sizeof (msg), "Importerte %d %s%s%s", (int)n, files, im->zips ? " (pakket ut zip)" : "",
+			im->dirIsHere ? "" : " til BT2-mappa");
+		c->toast(msg);
 	}
 
-	// the summary (not when it would only hide the message above: backups, or nothing imported because of an error)
-	if (c.stop == STOP_CANCEL || backups == count || (n == 0 && errors > 0))
-		return n;
-
-	snprintf(msg, sizeof (msg), "Importerte %d %s%s%s", (int)n, files, zips ? " (pakket ut zip)" : "", dirIsHere ? "" : " til BT2-mappa");
-	toast(msg);
-
+	free(im);
 	return n;
+}
+
+int32_t bt2ImportFiles(const char *const *paths, int32_t count, const char *dir, const char *userRoot, bool dirIsHere,
+	bt2ToastFunc toast, bt2ImportProgressFunc progress, void *ud, volatile int32_t *cancel)
+{
+	bt2Import *im = bt2ImportBegin(dir, userRoot, dirIsHere, toast, progress, ud, cancel, count);
+	if (im == NULL)
+		return 0;
+
+	for (int32_t f = 0; f < count && !stopped(&im->c); f++)
+	{
+		size_t len = 0;
+		uint8_t *data = bt2FsReadAll(paths[f], &len, MAX_IMPORT_SIZE);
+		bt2ImportData(im, paths[f], data, len);
+		free(data);
+	}
+
+	return bt2ImportEnd(im);
 }

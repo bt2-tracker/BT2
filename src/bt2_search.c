@@ -1,7 +1,5 @@
 /* BerntTracker: what the search window finds. See bt2_search.h. */
 
-#ifndef __EMSCRIPTEN__ // (the web version still does this in index.html)
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -431,4 +429,70 @@ int32_t bt2SearchRun(const char *query, int32_t where, int32_t what, const bt2Se
 	return n;
 }
 
+// ------------------------------------------------------------------------------------------------
+// where a hit leads (the same in the Windows program and the web version)
+
+static bool endsWithXi(const char *name)
+{
+	const size_t n = strlen(name);
+	return n >= 3 && name[n - 3] == '.' && (name[n - 2] == 'x' || name[n - 2] == 'X') && (name[n - 1] == 'i' || name[n - 1] == 'I');
+}
+
+static void toSystemSeparators(char *path)
+{
+#ifdef _WIN32
+	for (char *p = path; *p != '\0'; p++)
+	{
+		if (*p == '/')
+			*p = BT2_SEP;
+	}
+#else
+	(void)path;
 #endif
+}
+
+bool bt2SearchTarget(const bt2SearchItem *it, int32_t what, const char *userRoot, char *folder, size_t folderLen,
+	char *file, size_t fileLen, int32_t *diskOpItem)
+{
+	if (it == NULL || folderLen == 0 || fileLen == 0)
+		return false;
+
+	folder[0] = '\0';
+	file[0] = '\0';
+
+	// the folder (on Modland or in the BT2 folder): the hit itself, or the folder it is in
+	char rel[4096];
+	if (it->kind == BT2_KIND_FOLDER)
+		snprintf(rel, sizeof (rel), "%s", it->rel);
+	else
+		snprintf(rel, sizeof (rel), "%.*s", (int)it->dirLen, it->rel);
+
+	if (it->modland)
+	{
+		// (made and filled here; the names here can differ from Modland's)
+		if (!bt2ModlandMaterialize(rel, folder, folderLen))
+			return false;
+
+		if (it->kind != BT2_KIND_FOLDER && !bt2ModlandMaterialize(it->rel, file, fileLen))
+			return false;
+	}
+	else
+	{
+		if (rel[0] == '\0')
+			snprintf(folder, folderLen, "%s", userRoot);
+		else
+			bt2PathJoin(folder, folderLen, userRoot, rel);
+		toSystemSeparators(folder);
+
+		if (it->kind != BT2_KIND_FOLDER)
+			bt2PathJoin(file, fileLen, folder, it->name);
+	}
+
+	// the kind of files Disk Op. shows for it
+	if (it->kind == BT2_KIND_SOUND)
+		*diskOpItem = endsWithXi(it->name) ? BT2_ITEM_INSTR : BT2_ITEM_SAMPLE;
+	else
+		*diskOpItem = (what == BT2_WHAT_SOUND) ? BT2_ITEM_SAMPLE : BT2_ITEM_MODULE;
+
+	return true;
+}

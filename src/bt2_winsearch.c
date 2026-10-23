@@ -881,35 +881,7 @@ void bt2SearchFree(void)
 // ------------------------------------------------------------------------------------------------
 // doing what was chosen
 
-static void folderOf(const char *rel, int32_t dirLen, char *out, size_t outLen)
-{
-	snprintf(out, outLen, "%.*s", (int)dirLen, rel);
-}
 
-// the item's folder here (own: in the BT2 folder; Modland: made and filled)
-static bool localFolder(const bt2SearchItem *it, const char *modlandFolder, char *out, size_t outLen)
-{
-	if (it->modland)
-		return bt2ModlandMaterialize(modlandFolder, out, outLen);
-
-	char *home = bt2Utf8(bt2HomeRootU());
-	if (home == NULL)
-		return false;
-
-	if (modlandFolder[0] == '\0')
-		snprintf(out, outLen, "%s", home);
-	else
-		bt2PathJoin(out, outLen, home, modlandFolder);
-	free(home);
-
-	for (char *p = out; *p != '\0'; p++)
-	{
-		if (*p == '/')
-			*p = '\\';
-	}
-
-	return true;
-}
 
 static void showFolder(const char *folder, int32_t item)
 {
@@ -935,61 +907,37 @@ static void showFolder(const char *folder, int32_t item)
 	editor.diskOpReadDir = true;
 }
 
-static bool endsWithXi(const char *name)
-{
-	const size_t n = strlen(name);
-	return n >= 3 && name[n - 3] == '.' && (name[n - 2] == 'x' || name[n - 2] == 'X') && (name[n - 1] == 'i' || name[n - 1] == 'I');
-}
 
 static void act(const bt2SearchItem *it, bool showFolderToo)
 {
 	if (it == NULL)
 		return;
 
-	char folderRel[2048], folder[2048];
-	if (it->kind == BT2_KIND_FOLDER)
-		snprintf(folderRel, sizeof (folderRel), "%s", it->rel);
-	else
-		folderOf(it->rel, it->dirLen, folderRel, sizeof (folderRel));
+	// where it leads (bt2SearchTarget: the same as in the web version)
+	char *home = bt2Utf8(bt2HomeRootU());
+	char folder[2048], file[2600];
+	int32_t item = BT2_ITEM_MODULE;
+	const bool found = (home != NULL) && bt2SearchTarget(it, S.what, home, folder, sizeof (folder), file, sizeof (file), &item);
+	free(home);
 
-	if (!localFolder(it, folderRel, folder, sizeof (folder)))
+	bt2SearchClose();
+	if (!found)
 	{
-		bt2SearchClose();
 		bt2Toast("Fant ikke mappa");
 		return;
 	}
 
 	if (it->kind == BT2_KIND_FOLDER || showFolderToo)
 	{
-		const int32_t item = (it->kind == BT2_KIND_SOUND) ? (endsWithXi(it->name) ? DISKOP_ITEM_INSTR : DISKOP_ITEM_SAMPLE)
-			: ((S.what == BT2_WHAT_SOUND) ? DISKOP_ITEM_SAMPLE : DISKOP_ITEM_MODULE);
-		bt2SearchClose();
-		showFolder(folder, item);
+		showFolder(folder, (item == BT2_ITEM_INSTR) ? DISKOP_ITEM_INSTR : (item == BT2_ITEM_SAMPLE) ? DISKOP_ITEM_SAMPLE : DISKOP_ITEM_MODULE);
 		return;
 	}
 
 	// a song, an instrument or a sample: opened in FT2, like a dropped file (Modland's songs are downloaded first)
-	char path[2600];
-	if (it->modland)
-	{
-		if (!bt2ModlandMaterialize(it->rel, path, sizeof (path))) // (its name here)
-		{
-			bt2SearchClose();
-			bt2Toast("Fant ikke filen");
-			return;
-		}
-	}
-	else
-	{
-		bt2PathJoin(path, sizeof (path), folder, it->name);
-	}
-
-	bt2SearchClose();
-
 	SDL_Event ev;
 	memset(&ev, 0, sizeof (ev));
 	ev.type = SDL_DROPFILE;
-	ev.drop.file = SDL_strdup(path);
+	ev.drop.file = SDL_strdup(file);
 	ev.drop.windowID = (video.window != NULL) ? SDL_GetWindowID(video.window) : 0;
 	if (ev.drop.file != NULL && SDL_PushEvent(&ev) <= 0)
 		SDL_free(ev.drop.file);

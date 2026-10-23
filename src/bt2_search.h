@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 enum
 {
@@ -56,3 +57,13 @@ int32_t bt2SearchRun(const char *query, int32_t where, int32_t what, const bt2Se
 	bt2SearchItem ***results);
 
 void bt2Utf8Lower(const char *in, char *out, size_t outLen); // small letters (also æøå, é, ö ...)
+
+// Disk Op.'s kinds of files (the same numbers as DISKOP_ITEM_...)
+enum { BT2_ITEM_MODULE = 0, BT2_ITEM_INSTR = 1, BT2_ITEM_SAMPLE = 2 };
+
+/* Where a hit leads: its folder here (Modland's folders are made and filled) and, for a song, instrument or sample,
+** the file. *diskOpItem: the kind of files Disk Op. shows for it. false = the folder or file isn't there.
+** (The same in the Windows program and the web version.)
+*/
+bool bt2SearchTarget(const bt2SearchItem *it, int32_t what, const char *userRoot, char *folder, size_t folderLen,
+	char *file, size_t fileLen, int32_t *diskOpItem);

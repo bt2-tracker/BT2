@@ -40,7 +40,11 @@ const bt2ModlandSetup *bt2ModlandGetSetup(void);
 bool bt2ModlandIsLoaded(void);
 bool bt2ModlandLoadSaved(bool *old); // the saved list (false = none: it must be downloaded)
 
-// downloads allmods.zip, keeps the Fasttracker 2 lines and saves them (in a worker thread).
+// allmods.zip (in memory) -> the Fasttracker 2 lines ("size<TAB>Artist/song.xm", malloc'ed). NULL = not a zip file with the list
+char *bt2ModlandListFromZip(const uint8_t *zip, size_t zipLen, size_t *len);
+void bt2ModlandSaveList(const char *text, size_t len); // in setup.listFile (the web version keeps it in the browser's cache)
+
+// downloads allmods.zip, keeps the Fasttracker 2 lines and saves them (in a worker thread; the Windows program).
 // NULL = failed (*res says why; *unreadable = the file came, but wasn't a zip file with the list).
 char *bt2ModlandFetchList(volatile int32_t *cancel, bt2NetProgressFunc progress, void *ud, bt2NetResult *res, bool *unreadable, size_t *len);
 
@@ -62,6 +66,31 @@ bool bt2ModlandMaterialize(const char *modlandPath, char *out, size_t outLen);
 bool bt2ModlandOwnFolderFor(const char *mirrorDir, char *out, size_t outLen);
 
 void bt2ModlandFileUrl(const char *modlandPath, char *out, size_t outLen);
+
+// ---- a song, before it is opened (the same in the Windows program and the web version)
+typedef struct bt2ModlandSong_t
+{
+	char file[2048];        // the song in Modland's folders here
+	char modlandPath[2048]; // on Modland ("Artist/song.xm")
+	char ownPath[2048];     // the user's own copy (BT2/Modland/...)
+	char url[6200];         // (BT2_SONG_DOWNLOAD)
+	char label[600];        // for the download box: "Henter «song.xm» fra Modland"
+} bt2ModlandSong;
+
+enum { BT2_SONG_OPEN = 0, BT2_SONG_DOWNLOAD, BT2_SONG_FAILED, BT2_SONG_NOT_MODLAND };
+
+/* What happens before a song in Modland's folders is opened (the list must be loaded):
+** - the user's own copy is there: it is what is opened, also after it was changed and saved (BT2_SONG_OPEN)
+** - the song came before, but the user's copy is gone: a new copy of it is made (BT2_SONG_OPEN)
+** - else it is downloaded from song->url (BT2_SONG_DOWNLOAD), then given to bt2ModlandStoreSong()
+** msg: a message to show ("" = none).
+*/
+int32_t bt2ModlandPrepareSong(const char *file, bt2ModlandSong *song, char *msg, size_t msgLen);
+
+// the downloaded song: the user's own copy (*ownSaved) and Modland's folder (false = it couldn't be written there)
+bool bt2ModlandStoreSong(const bt2ModlandSong *song, const uint8_t *data, size_t len, bool *ownSaved);
+void bt2ModlandStoredMessage(const bt2ModlandSong *song, bool ownSaved, char *msg, size_t msgLen); // "Lagret i BT2/Modland/..."
+size_t bt2ModlandMaxSongSize(void);
 
 // ---- all songs (for the search window)
 int32_t bt2ModlandFileCount(void);

@@ -266,7 +266,7 @@ img.logo3d { display: block; width: min(92vw, 640px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.22';
+	const BT2_VERSION = '0.23';
 	const BT2_DATE = '22.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -938,12 +938,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			BT2.toastTimer = setTimeout(() => t.classList.remove('show'), 2600);
 		},
 
-		// ---------- importing files (Disk Op "Imp."): into the folder you are in, never over an existing file
+		// ---------- importing files (Disk Op "Imp.", dropped files): into the folder you are in, never over an existing file.
+		// The program decides where and how (bt2_import.c, the same as in the Windows program): zip files are unpacked, a
+		// backup is put back where it was. The page reads the files and hands them over one by one; a zip file one file in
+		// it at a time, unpacked by the browser (so a big backup never has to fit in the program's memory at once).
 		USER_ROOT: '/home/web_user/BT2',
-		importDir() {
-			const dir = Module.bt2FS.cwd();
-			return (dir === BT2.USER_ROOT || dir.startsWith(BT2.USER_ROOT + '/')) ? dir : BT2.USER_ROOT;
-		},
 		mkdirs(dir) {
 			const FS = Module.bt2FS;
 			const parts = dir.split('/');
@@ -952,103 +951,131 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				if (d && !FS.analyzePath(d).exists) FS.mkdir(d);
 			}
 		},
-		uniquePath(path) { // "song.xm" -> "song (2).xm" if the name is taken
-			const FS = Module.bt2FS;
-			if (!FS.analyzePath(path).exists) return path;
-			const slash = path.lastIndexOf('/'), dot = path.lastIndexOf('.');
-			const stem = dot > slash ? path.slice(0, dot) : path, ext = dot > slash ? path.slice(dot) : '';
-			for (let i = 2; ; i++) {
-				const p = stem + ' (' + i + ')' + ext;
-				if (!FS.analyzePath(p).exists) return p;
-			}
+		// files: File objects, or { file, rel } for files from a dropped folder ("folder/sub/song.xm": the folders are kept).
+		// Resolves to the number of files written; out.first (if out is given) = the first file written that wasn't in a zip.
+		// One import at a time: a new one waits for the one before (the program has one import open).
+		importQueue: null,
+		importFiles(files, out) {
+			const run = (BT2.importQueue || Promise.resolve()).then(() => BT2.importFilesNow(files, out));
+			BT2.importQueue = run.catch(() => 0);
+			return run;
 		},
-		// "song.xm" is taken: the first free "song (2).xm" ..., or null if one of those already has these contents
-		sameCopyOrFreePath(path, content) {
-			const FS = Module.bt2FS;
-			const slash = path.lastIndexOf('/'), dot = path.lastIndexOf('.');
-			const stem = dot > slash ? path.slice(0, dot) : path, ext = dot > slash ? path.slice(dot) : '';
-			for (let i = 2; ; i++) {
-				const p = stem + ' (' + i + ')' + ext;
-				if (!FS.analyzePath(p).exists) return p;
-				try {
-					if (FS.isFile(FS.stat(p).mode)) {
-						const cur = FS.readFile(p);
-						if (cur.length === content.length && cur.every((v, k) => v === content[k])) return null;
-					}
-				} catch (e) {}
+		async importFilesNow(files, out) {
+			const list = files.map((f) => (f instanceof File) ? { file: f, rel: f.name, keep: false }
+				: { file: f.file, rel: f.rel, keep: f.rel.includes('/') });
+			if (!list.length || !Module._webImportBegin(list.length)) return 0;
+			BT2.netBusy++; // (the program is busy, not stuck)
+			const start = performance.now();
+			let shown = false, pct = -1, n = 0;
+			const progress = (done) => { // 0..1 of all the files (shown when it takes a while)
+				if (!shown && performance.now() - start < 400) return;
+				const p = Math.round(100 * done);
+				if (shown && p === pct) return;
+				shown = true;
+				pct = p;
+				BT2.netShow('Importerer … ' + p + ' %', done);
+			};
+			try {
+				for (let i = 0; i < list.length; i++) {
+					const it = list[i];
+					progress(i / list.length);
+					let data = null;
+					try { data = new Uint8Array(await it.file.arrayBuffer()); } catch (e) { console.warn('import', it.rel, e); }
+					if (data && !it.keep && /\.zip$/i.test(it.rel))
+						await BT2.importZip(it.rel, data, (d) => progress((i + d) / list.length));
+					else
+						BT2.importData(it.rel, data, it.keep);
+				}
+			} finally {
+				BT2.netBusy--;
+				if (shown) BT2.netHide();
+				n = Module._webImportEnd();
+				if (out) out.first = Module.UTF8ToString(Module._webImportFirstFile());
+				Module._webImportDone();
+				BT2.syncFiles();
 			}
-		},
-		cleanName(n) { return n.replace(/[\/\\:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '_').slice(0, 200); },
-		async importFiles(files) {
-			const FS = Module.bt2FS;
-			const dir = BT2.importDir();
-			let n = 0, zips = 0, backups = 0, errors = 0;
-			BT2.lastImportPaths = [];
-			for (const f of files) {
-				try {
-					const data = new Uint8Array(await f.arrayBuffer());
-					if (/\.zip$/i.test(f.name)) {
-						const entries = BT2.zipEntries(data);
-						// our own backup (everything under "BT2/"): put the files back where they were.
-						// Files that are already there are left alone (same name, other content: saved as "name (2)").
-						if (entries.length && entries.every((e) => e.name.startsWith('BT2/') || e.name.startsWith('Innstillinger/'))) {
-							let restored = 0, failed = 0;
-							for (const e of entries) {
-								if (e.dir || !e.name.startsWith('BT2/')) continue;
-								try { // (one bad entry doesn't stop the rest)
-									const parts = e.name.slice(4).split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
-									if (!parts.length) continue;
-									let dest = BT2.USER_ROOT + '/' + parts.join('/');
-									const content = await BT2.zipExtract(data, e);
-									const there = FS.analyzePath(dest);
-									if (there.exists) {
-										const isFile = FS.isFile(FS.stat(dest).mode);
-										const cur = isFile ? FS.readFile(dest) : null;
-										if (cur && cur.length === content.length && cur.every((v, i) => v === content[i])) continue; // the same file
-										if (cur && cur.length === 0) { FS.writeFile(dest, content); restored++; continue; } // an empty demo placeholder
-										dest = BT2.sameCopyOrFreePath(dest, content); // (a different file, or a folder, with that name)
-										if (!dest) continue; // (this backup was put back before: "name (2)" is the same)
-									}
-									BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
-									FS.writeFile(dest, content);
-									restored++;
-								} catch (err) {
-									console.warn('restore', e.name, err);
-									failed++;
-								}
-							}
-							n += restored;
-							backups++;
-							BT2.toast('Sikkerhetskopi: ' + restored + (restored === 1 ? ' fil' : ' filer') + ' lagt tilbake i BT2' + (failed ? ' (' + failed + ' kunne ikke leses)' : ''));
-							continue;
-						}
-						// a zip file: unpack it, with its folders, into a folder with the zip's name
-						const base = BT2.uniquePath(dir + '/' + BT2.cleanName(f.name.replace(/\.zip$/i, '')));
-						for (const e of entries) {
-							if (e.dir || /(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db)(\/|$)/i.test(e.name)) continue;
-							const parts = e.name.split('/').filter((x) => x && x !== '.' && x !== '..').map(BT2.cleanName);
-							if (!parts.length) continue;
-							const dest = BT2.uniquePath(base + '/' + parts.join('/'));
-							BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
-							FS.writeFile(dest, await BT2.zipExtract(data, e));
-							n++;
-						}
-						zips++;
-					} else {
-						const dest = BT2.uniquePath(dir + '/' + BT2.cleanName(f.name));
-						FS.writeFile(dest, data);
-						BT2.lastImportPaths.push(dest);
-						n++;
-					}
-				} catch (e) { console.error('import', f.name, e); BT2.toast('Kunne ikke importere ' + f.name); errors++; }
-			}
-			Module._webImportDone();
-			BT2.syncFiles();
-			// (not when it would only hide the message above: backups, or nothing came in because of an error)
-			if (backups === files.length || (n === 0 && errors > 0)) return n;
-			BT2.toast((n === 1 ? 'Importerte 1 fil' : 'Importerte ' + n + ' filer') + (zips ? ' (pakket ut zip)' : '') +
-				(dir === BT2.USER_ROOT && Module.bt2FS.cwd() !== dir ? ' til BT2-mappa' : ''));
 			return n;
+		},
+		withHeap(data, fn) { // data (or null) in the program's memory for fn(pointer, length); pointer 0 = not there
+			const len = data ? data.length : 0;
+			const p = data ? Module._malloc(len + 1) : 0;
+			if (p) Module.bt2HeapU8().set(data, p);
+			try { return fn(p, len); } finally { if (p) Module._free(p); }
+		},
+		importData(name, data, keepFolders) { // one file to the program (data null: it couldn't be read)
+			BT2.withHeap(data, (p, len) =>
+				Module.ccall('webImportData', null, ['string', 'number', 'number', 'number'], [name, p, len, keepFolders ? 1 : 0]));
+		},
+		// a zip file: its table of contents to the program, then the files it wants, one at a time
+		async importZip(name, data, progress) {
+			const entries = BT2.zipEntries(data);
+			if (!entries) { BT2.importData(name, null, false); return; } // (the program says it couldn't be imported)
+			entries.forEach((e, i) => Module.ccall('webImportZipAdd', null, ['number', 'string', 'number', 'number', 'number'],
+				[i, e.name, e.dir ? 1 : 0, e.usize, e.crc]));
+			if (!Module.ccall('webImportZipBegin', 'number', ['string'], [name])) return;
+			try {
+				for (let i = 0; i < entries.length; i++) {
+					progress(i / entries.length);
+					if (!Module._webImportZipWants(i)) continue;
+					let r = null;
+					try { r = await BT2.zipExtract(data, entries[i]); } catch (e) { console.warn('import', name, entries[i].name, e); }
+					if (r && r.packed) BT2.withHeap(r.packed, (p, len) => Module._webImportZipEntryPacked(i, p, len));
+					else BT2.withHeap(r ? r.data : null, (p, len) => Module._webImportZipEntry(i, p, len));
+				}
+			} finally {
+				Module._webImportZipEnd();
+			}
+		},
+		// a zip file's table of contents (like bt2ZipList: sizes over 4 GB and very long names are left out). null = not a zip file
+		zipEntries(buf) {
+			if (buf.length < 22) return null;
+			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+			let eocd = -1;
+			for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--)
+				if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+			if (eocd < 0) return null;
+			const count = dv.getUint16(eocd + 10, true);
+			let p = dv.getUint32(eocd + 16, true);
+			const out = [], enc = new TextEncoder();
+			for (let i = 0; i < count && p + 46 <= buf.length && dv.getUint32(p, true) === 0x02014b50; i++) {
+				const method = dv.getUint16(p + 10, true), crc = dv.getUint32(p + 16, true);
+				const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
+				const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
+				const off = dv.getUint32(p + 42, true);
+				if (p + 46 + nlen > buf.length) break;
+				const nameBytes = buf.subarray(p + 46, p + 46 + nlen);
+				let name;
+				try { name = new TextDecoder('utf-8', { fatal: true }).decode(nameBytes); }
+				catch (err) { name = new TextDecoder('windows-1252').decode(nameBytes); } // (old zip programs)
+				if (csize !== 0xFFFFFFFF && usize !== 0xFFFFFFFF && off !== 0xFFFFFFFF && nlen < 512 && enc.encode(name).length < 512)
+					out.push({ name, method, crc, csize, usize, off, dir: /[\/\\]$/.test(name) });
+				p += 46 + nlen + xlen + clen;
+			}
+			return out.length ? out : null;
+		},
+		// one file in a zip file: { data }, or { packed } when this browser can't unpack it (the program does it then).
+		// null = damaged, or packed in a way nobody here knows.
+		async zipExtract(buf, e) {
+			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+			if (e.off + 30 > buf.length || dv.getUint32(e.off, true) !== 0x04034b50) return null;
+			const start = e.off + 30 + dv.getUint16(e.off + 26, true) + dv.getUint16(e.off + 28, true);
+			if (start + e.csize > buf.length) return null;
+			const raw = buf.subarray(start, start + e.csize);
+			if (e.method === 0) return { data: raw };
+			if (e.method !== 8) return null;
+			if (typeof DecompressionStream === 'undefined') return { packed: raw };
+			// never more than the size the zip file gives (the program has checked that size), whatever is in it
+			const out = new Uint8Array(e.usize);
+			let got = 0;
+			const reader = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw')).getReader();
+			for (;;) {
+				const { done, value } = await reader.read();
+				if (done) break;
+				if (got + value.length > out.length) { reader.cancel().catch(() => {}); return null; }
+				out.set(value, got);
+				got += value.length;
+			}
+			return got === out.length ? { data: out } : null;
 		},
 		doImport() {
 			const input = $('importInput');
@@ -1058,40 +1085,6 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				if (files.length) BT2.importFiles(files);
 			};
 			input.click();
-		},
-
-		// ---------- zip files (import, Modland list)
-		zipEntries(buf) {
-			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-			let eocd = -1;
-			for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--)
-				if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
-			if (eocd < 0) throw new Error('not a zip file');
-			const count = dv.getUint16(eocd + 10, true);
-			let p = dv.getUint32(eocd + 16, true);
-			const out = [];
-			for (let i = 0; i < count && dv.getUint32(p, true) === 0x02014b50; i++) {
-				const flags = dv.getUint16(p + 8, true), method = dv.getUint16(p + 10, true);
-				const csize = dv.getUint32(p + 20, true), usize = dv.getUint32(p + 24, true);
-				const nlen = dv.getUint16(p + 28, true), xlen = dv.getUint16(p + 30, true), clen = dv.getUint16(p + 32, true);
-				const off = dv.getUint32(p + 42, true);
-				const nameBytes = buf.subarray(p + 46, p + 46 + nlen);
-				let name;
-				try { name = new TextDecoder('utf-8', { fatal: true }).decode(nameBytes); }
-				catch (err) { name = new TextDecoder('windows-1252').decode(nameBytes); } // old zip programs
-				out.push({ name, method, csize, usize, off, dir: name.endsWith('/') });
-				p += 46 + nlen + xlen + clen;
-			}
-			return out;
-		},
-		async zipExtract(buf, e) {
-			const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-			const start = e.off + 30 + dv.getUint16(e.off + 26, true) + dv.getUint16(e.off + 28, true);
-			const raw = buf.subarray(start, start + e.csize);
-			if (e.method === 0) return raw.slice();
-			if (e.method !== 8) throw new Error('zip method ' + e.method);
-			const stream = new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-			return new Uint8Array(await new Response(stream).arrayBuffer());
 		},
 
 		// ---------- downloads with a progress box
@@ -1369,13 +1362,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			}
 			return '/' + out.join('/');
 		},
-		async prepareFile(path) {
+		async prepareFile(path) { // (Modland's songs: the program, bt2_modland.c)
 			const FS = Module.bt2FS;
 			const abs = BT2.absPath(path);
-			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) BT2.fsReaddirHook(abs.slice(0, abs.lastIndexOf('/')));
 			let st = null;
 			try { st = FS.stat(abs); } catch (e) { return true; } // let the program report it
-			if (abs.startsWith(BT2.MODLAND_ROOT + '/')) return BT2.modlandFetch(abs, st.size);
 			if (st.size > 0) return true;
 
 			if (abs.startsWith(BT2.DEMO_ROOT + '/')) {
@@ -1392,12 +1383,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		},
 
 		// ---------- Modland (https://modland.com, the "Fasttracker 2" folder) as folders in Disk Op
-		MODLAND_ROOT: '/Modland',
-		MODLAND_SEARCH: '/Modland/~Search results',
-		MODLAND_URL: 'https://modland.com/pub/modules/Fasttracker%202/',
-		modland: { tree: null, populated: new Set(), searchMap: new Map() },
+		// The folders, the songs and their rules are in the program (bt2_modland.c, the same as in the Windows program).
+		// The page downloads the list (allmods.zip) and keeps it in the browser's cache; songs are downloaded with BT2.download.
+		modland: { loaded: false, loading: null },
 		modlandLoad() {
-			if (BT2.modland.tree) return Promise.resolve(true);
+			if (BT2.modland.loaded) return Promise.resolve(true);
 			if (!BT2.modland.loading) BT2.modland.loading = BT2.modlandLoadNow().finally(() => { BT2.modland.loading = null; });
 			return BT2.modland.loading;
 		},
@@ -1414,129 +1404,51 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			} else if (Date.now() - saved > 30 * 864e5 && navigator.onLine !== false) {
 				BT2.modlandDownloadList(true).catch(() => {}); // refresh in the background (used next time)
 			}
-			const root = { d: new Map(), f: new Map() };
-			for (const line of text.split('\n')) {
-				const t = line.indexOf('\t');
-				if (t <= 0) continue;
-				const parts = line.slice(t + 1).split('/');
-				let node = root;
-				for (let i = 0; i < parts.length - 1; i++) {
-					let next = node.d.get(parts[i]);
-					if (!next) { next = { d: new Map(), f: new Map() }; node.d.set(parts[i], next); }
-					node = next;
-				}
-				node.f.set(parts[parts.length - 1], +line.slice(0, t));
+			BT2.modland.loaded = BT2.modlandUseList(text);
+			if (!BT2.modland.loaded) {
+				BT2.toast('Kunne ikke lese Modland-listen');
+				try { await (await caches.open('bt2-modland')).delete('ft2-index-v1'); } catch (e) {} // (fetched again next time)
 			}
-			BT2.modland.tree = root;
-			BT2.modland.lines = text;
-			return true;
+			return BT2.modland.loaded;
+		},
+		modlandUseList(text) { // the list to the program (which keeps it)
+			if (Module._webModlandIsLoaded()) return true;
+			const bytes = new TextEncoder().encode(text);
+			const p = Module._malloc(bytes.length + 1);
+			if (!p) return false;
+			const heap = Module.bt2HeapU8();
+			heap.set(bytes, p);
+			heap[p + bytes.length] = 0;
+			return Module._webModlandUseList(p, bytes.length) !== 0;
+		},
+		modlandListFromZip(buf) { // allmods.zip -> the Fasttracker 2 lines (the program reads it, like the Windows program)
+			const p = Module._malloc(buf.length + 1);
+			if (!p) return null;
+			Module.bt2HeapU8().set(buf, p);
+			const t = Module._webModlandListFromZip(p, buf.length);
+			Module._free(p);
+			if (!t) return null;
+			const text = Module.UTF8ToString(t);
+			Module._free(t);
+			return text;
 		},
 		async modlandDownloadList(quiet) {
 			const buf = quiet ? await (await fetch('https://modland.com/allmods.zip', { cache: 'no-cache' })).arrayBuffer().then((b) => new Uint8Array(b))
 				: await BT2.download('https://modland.com/allmods.zip', 'Henter Modland-listen (bare første gang)');
 			if (!buf) return null;
-			let all;
-			try {
-				const entries = BT2.zipEntries(buf);
-				const e = entries.find((x) => /allmods\.txt$/i.test(x.name)) || entries[0];
-				all = new TextDecoder('utf-8').decode(await BT2.zipExtract(buf, e));
-			} catch (err) {
-				console.warn('Modland list', err);
+			// (reading the list stops the page for a moment: in the background, not while a song plays)
+			while (quiet && Module._webSongIsPlaying && Module._webSongIsPlaying()) await new Promise((r) => setTimeout(r, 5000));
+			const text = BT2.modlandListFromZip(buf);
+			if (!text) {
+				console.warn('Modland list: not a zip file with the list');
 				if (!quiet) BT2.toast('Kunne ikke lese Modland-listen');
 				return null;
 			}
-			const out = [];
-			for (const line of all.split('\n')) {
-				const i = line.indexOf('\tFasttracker 2/');
-				if (i > 0) out.push(line.slice(0, i) + '\t' + line.slice(i + 15).replace(/\r$/, ''));
-			}
-			const text = out.join('\n');
 			try {
 				const c = await caches.open('bt2-modland');
 				await c.put('ft2-index-v1', new Response(text, { headers: { 'Content-Type': 'text/plain', 'X-Saved': String(Date.now()) } }));
 			} catch (e2) {}
 			return text;
-		},
-		modlandNode(abs) { // tree node for a folder under /Modland
-			if (!BT2.modland.tree) return null;
-			let node = BT2.modland.tree;
-			if (abs === BT2.MODLAND_ROOT) return node;
-			for (const part of abs.slice(BT2.MODLAND_ROOT.length + 1).split('/')) {
-				node = node.d.get(part);
-				if (!node) return null;
-			}
-			return node;
-		},
-		fsReaddirHook(abs) { // fills /Modland folders the first time they are listed
-			if (abs !== BT2.MODLAND_ROOT && !abs.startsWith(BT2.MODLAND_ROOT + '/')) return;
-			if (BT2.modland.populated.has(abs)) return;
-			const node = BT2.modlandNode(abs);
-			if (!node) return;
-			BT2.modland.populated.add(abs);
-			const FS = Module.bt2FS;
-			for (const name of node.d.keys()) { try { FS.mkdir(abs + '/' + name); } catch (e) {} }
-			for (const name of node.f.keys()) { try { FS.writeFile(abs + '/' + name, new Uint8Array(0)); } catch (e) {} }
-		},
-		async modlandPrepare() {
-			if (!(await BT2.modlandLoad())) return false;
-			const FS = Module.bt2FS;
-			if (!FS.analyzePath(BT2.MODLAND_ROOT).exists) FS.mkdir(BT2.MODLAND_ROOT);
-			return true;
-		},
-		async modlandSearch(query) {
-			if (!(await BT2.modlandPrepare())) return -1;
-			const FS = Module.bt2FS;
-			const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-			const hits = [];
-			for (const line of BT2.modland.lines.split('\n')) {
-				const t = line.indexOf('\t');
-				const path = line.slice(t + 1), low = path.toLowerCase();
-				if (words.every((w) => low.includes(w))) { hits.push(path); if (hits.length >= 500) break; }
-			}
-			// the results folder is rebuilt for each search (it is not stored anywhere)
-			const dir = BT2.MODLAND_SEARCH;
-			if (FS.analyzePath(dir).exists) {
-				for (const n of FS.readdir(dir)) if (n !== '.' && n !== '..') { try { FS.unlink(dir + '/' + n); } catch (e) {} }
-			} else {
-				FS.mkdir(dir);
-			}
-			BT2.modland.searchMap = new Map();
-			for (const path of hits) {
-				let name = BT2.cleanName(path.split('/').join(' - '));
-				while (BT2.modland.searchMap.has(name)) name = '_' + name;
-				BT2.modland.searchMap.set(name, path);
-				FS.writeFile(dir + '/' + name, new Uint8Array(0));
-			}
-			return hits.length;
-		},
-		async modlandFetch(abs, size) {
-			const FS = Module.bt2FS;
-			const path = abs.startsWith(BT2.MODLAND_SEARCH + '/') ? BT2.modland.searchMap.get(abs.slice(BT2.MODLAND_SEARCH.length + 1))
-				: abs.slice(BT2.MODLAND_ROOT.length + 1);
-			if (!path) return true;
-			const own = BT2.USER_ROOT + '/Modland/' + path; // the user's own copy (kept, works without internet)
-			// the user's own copy is what is opened (also after it was changed and saved)
-			try {
-				if (FS.stat(own).size > 0) { FS.writeFile(abs, FS.readFile(own)); return true; }
-			} catch (e) {}
-			if (size > 0) { // it came before (the user's copy has been deleted or moved since): a new copy of it
-				try {
-					BT2.mkdirs(own.slice(0, own.lastIndexOf('/')));
-					FS.writeFile(own, FS.readFile(abs));
-					BT2.syncFiles();
-					BT2.toast('Lagret i BT2/Modland/' + path);
-				} catch (e) { BT2.toast('Kunne ikke lagre i BT2/Modland/' + path); }
-				return true;
-			}
-			const data = await BT2.download(BT2.MODLAND_URL + path.split('/').map(encodeURIComponent).join('/'),
-				'Henter «' + path.split('/').pop() + '» fra Modland');
-			if (!data) return false;
-			BT2.mkdirs(own.slice(0, own.lastIndexOf('/')));
-			FS.writeFile(own, data);
-			FS.writeFile(abs, data);
-			BT2.syncFiles();
-			BT2.toast('Lagret i BT2/Modland/' + path);
-			return true;
 		},
 
 		loadStage(t) { $('loadStatus').textContent = t; },
@@ -1787,106 +1699,49 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	// ---------- search window: songs and folders in the user's own files and in Modland
 	// Opened with Disk Op.'s «Find» button or Ctrl+F (Cmd+F on iPad/Mac). Typing filters at once; a song
 	// opens in FT2, a folder opens in Disk Op. Songs from Modland are downloaded and kept like before.
-	BT2.modlandMaterialize = (absFolder) => { // make the Modland folders down to absFolder exist (they are filled when listed)
-		const FS = Module.bt2FS;
-		if (!FS.analyzePath(BT2.MODLAND_ROOT).exists) FS.mkdir(BT2.MODLAND_ROOT);
-		let cur = BT2.MODLAND_ROOT;
-		BT2.fsReaddirHook(cur);
-		for (const part of absFolder.slice(BT2.MODLAND_ROOT.length + 1).split('/').filter(Boolean)) {
-			cur += '/' + part;
-			BT2.fsReaddirHook(cur);
-		}
-	};
 	BT2.search = (() => {
-		const SONG = /\.(xm|mod|s3m|it|stm|stk|nst|digi|bem|mtm|669|wow)$/i;
-		const SOUND = /\.(xi|xp|xt|wav|aiff?|iff|8svx|raw|flac|ogg|mp3|brr|pat|sf2)$/i;
-		const kindOf = (name) => SONG.test(name) ? 'song' : SOUND.test(name) ? 'sound' : 'other';
-		const S = { open: false, where: 'all', what: 'all', sel: 0, results: [], shown: 200, own: [], mod: null,
-			modLoading: false, timer: 0, words: [] };
+		// The program finds (bt2_search.c, the same as in the Windows program: the same hits in the same order);
+		// the page shows the window (the iPad's keyboard needs a real text box).
+		const WHERE = { all: 0, own: 1, modland: 2 }, WHAT = { all: 0, song: 1, folder: 2, sound: 3 };
+		const KIND = ['folder', 'song', 'sound', 'other'];
+		const S = { open: false, where: 'all', what: 'all', sel: 0, results: [], total: 0, shown: 200, modReady: false,
+			modLoading: false, timer: 0 };
 		const box = () => $('search');
 		const fmtSize = (n) => n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? Math.round(n / 1024) + ' kB' : n ? n + ' B' : '';
 
-		const buildOwn = () => {
-			const FS = Module.bt2FS, items = [];
-			const walk = (abs, rel) => {
-				let names;
-				try { names = FS.readdir(abs); } catch (e) { return; }
-				for (const n of names) {
-					if (n === '.' || n === '..' || n[0] === '.') continue;
-					const p = abs + '/' + n, r = rel ? rel + '/' + n : n;
-					let st;
-					try { st = FS.stat(p); } catch (e) { continue; }
-					if (FS.isDir(st.mode)) {
-						items.push({ name: n, rel: r, dir: rel, abs: p, kind: 'folder', src: 'own' });
-						walk(p, r);
-					} else {
-						items.push({ name: n, rel: r, dir: rel, abs: p, kind: kindOf(n), size: st.size, src: 'own' });
-					}
-				}
-			};
-			walk(BT2.USER_ROOT, '');
-			for (const it of items) { it.low = it.rel.toLowerCase(); it.lowName = it.name.toLowerCase(); }
-			return items;
-		};
-		const buildModland = () => {
-			const items = [], folders = new Map();
-			for (const line of BT2.modland.lines.split('\n')) {
-				const t = line.indexOf('\t');
-				if (t <= 0) continue;
-				const rel = line.slice(t + 1), slash = rel.lastIndexOf('/');
-				const name = rel.slice(slash + 1);
-				items.push({ name, rel, dir: slash > 0 ? rel.slice(0, slash) : '', abs: BT2.MODLAND_ROOT + '/' + rel,
-					kind: kindOf(name) === 'other' ? 'song' : kindOf(name), size: +line.slice(0, t), src: 'modland' });
-				for (let d = slash > 0 ? rel.slice(0, slash) : ''; d; d = d.lastIndexOf('/') > 0 ? d.slice(0, d.lastIndexOf('/')) : '')
-					folders.set(d, (folders.get(d) || 0) + 1);
-			}
-			for (const [d, count] of folders) {
-				const s2 = d.lastIndexOf('/');
-				items.push({ name: d.slice(s2 + 1), rel: d, dir: s2 > 0 ? d.slice(0, s2) : '', abs: BT2.MODLAND_ROOT + '/' + d,
-					kind: 'folder', count, src: 'modland' });
-			}
-			for (const it of items) { it.low = it.rel.toLowerCase(); it.lowName = it.name.toLowerCase(); }
-			return items;
+		// hits [from, from + count) from the program
+		const hits = (from, count) => {
+			if (count <= 0) return [];
+			return JSON.parse(Module.UTF8ToString(Module._webSearchResults(from, count))).map((x) => {
+				const slash = x.r.lastIndexOf('/');
+				return { rel: x.r, name: x.r.slice(slash + 1), dir: slash > 0 ? x.r.slice(0, slash) : '', kind: KIND[x.k] || 'other',
+					src: x.m ? 'modland' : 'own', size: x.z, count: x.c };
+			});
 		};
 		const ensureModland = () => {
-			if (S.mod || S.modLoading) return;
+			if (S.modReady || S.modLoading) return;
 			S.modLoading = true;
 			status();
 			BT2.modlandLoad().then((ok) => {
 				S.modLoading = false;
-				if (ok) { S.mod = buildModland(); run(); } else status('Fikk ikke hentet Modland-listen (ingen nett?).');
+				if (ok && Module._webSearchModland()) { S.modReady = true; if (S.open) run(); }
+				else status('Fikk ikke hentet Modland-listen (ingen nett?).');
 			}).catch(() => { S.modLoading = false; status('Fikk ikke hentet Modland-listen (ingen nett?).'); });
 		};
 
 		const run = () => {
-			const words = $('searchInput').value.toLowerCase().split(/\s+/).filter(Boolean);
-			S.words = words;
-			const pools = [];
-			if (S.where !== 'modland') pools.push(S.own);
-			if (S.where !== 'own') {
-				if (S.mod) pools.push(S.mod);
-				else if (words.length || S.where === 'modland') ensureModland();
-			}
-			const res = [];
-			for (const pool of pools) {
-				for (const it of pool) {
-					if (S.what === 'all' ? it.kind === 'other' : it.kind !== S.what) continue;
-					let ok = true;
-					for (const w of words) if (!it.low.includes(w)) { ok = false; break; }
-					if (!ok) continue;
-					// best first: all words in the name itself, the name starting with the first word, folders, own files
-					let rank = 0;
-					for (const w of words) if (!it.lowName.includes(w)) { rank += 4; break; }
-					if (words.length && !it.lowName.startsWith(words[0])) rank += 2;
-					if (it.kind !== 'folder') rank += 1;
-					it.rank = rank + (it.src === 'own' ? 0 : 8) * (words.length ? 0 : 1);
-					res.push(it);
-				}
-			}
-			res.sort((a, b) => a.rank - b.rank || (a.src === b.src ? 0 : a.src === 'own' ? -1 : 1) || (a.low < b.low ? -1 : a.low > b.low ? 1 : 0));
-			S.results = res;
-			S.sel = 0;
+			const query = $('searchInput').value;
+			const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+			if (S.where !== 'own' && !S.modReady && (words.length || S.where === 'modland')) ensureModland();
+			S.total = Module.ccall('webSearchRun', 'number', ['string', 'number', 'number'], [query, WHERE[S.where], WHAT[S.what]]);
 			S.shown = 200;
+			S.results = hits(0, Math.min(S.total, S.shown));
+			S.sel = 0;
+			render();
+		};
+		const showMore = () => {
+			S.shown += 200;
+			S.results = S.results.concat(hits(S.results.length, Math.min(S.total, S.shown) - S.results.length));
 			render();
 		};
 
@@ -1928,11 +1783,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			list.textContent = '';
 			const frag = document.createDocumentFragment();
 			S.results.slice(0, S.shown).forEach((it, i) => frag.appendChild(row(it, i)));
-			if (S.results.length > S.shown) {
+			if (S.total > S.shown) {
 				const more = document.createElement('button');
 				more.className = 'ft-btn';
 				more.style.margin = '8px 10px';
-				more.textContent = 'Vis flere (' + (S.results.length - S.shown) + ' til)';
+				more.textContent = 'Vis flere (' + (S.total - S.shown) + ' til)';
 				more.dataset.more = '1';
 				frag.appendChild(more);
 			}
@@ -1948,8 +1803,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		};
 		const status = (msg) => {
 			const touch = navigator.maxTouchPoints > 0 && !matchMedia('(pointer: fine)').matches;
-			$('searchStatus').textContent = msg || ((S.results.length === 1 ? '1 treff' : S.results.length + ' treff') +
-				(S.modLoading ? ' · henter Modland-listen …' : (S.where !== 'own' && !S.mod ? ' · Modland: skriv noe for å søke der' : '')) +
+			$('searchStatus').textContent = msg || ((S.total === 1 ? '1 treff' : S.total + ' treff') +
+				(S.modLoading ? ' · henter Modland-listen …' : (S.where !== 'own' && !S.modReady ? ' · Modland: skriv noe for å søke der' : '')) +
 				(touch ? ' · trykk for å åpne' : ' · \u2191\u2193 velg · Enter åpne · Shift+Enter vis mappa · Esc lukk'));
 		};
 		const highlight = (scroll) => {
@@ -1975,27 +1830,19 @@ registerProcessor('bt2-queue', BT2Queue);`;
 				.forEach(([k, i]) => st.setProperty(k, c(i)));
 		};
 
-		const act = (it, showFolder) => {
-			if (!it) return;
-			const folderOf = (p) => p.slice(0, p.lastIndexOf('/'));
-			if (it.kind === 'folder' || showFolder) {
-				const folder = it.kind === 'folder' ? it.abs : folderOf(it.abs);
-				if (it.src === 'modland') BT2.modlandMaterialize(folder);
-				const item = it.kind === 'sound' ? (/\.xi$/i.test(it.name) ? 1 : 2) : (S.what === 'sound' ? 2 : 0);
-				Module.ccall('webDiskOpShowFolder', null, ['string', 'number'], [folder, item]);
-				close();
-				return;
-			}
-			if (it.src === 'modland') BT2.modlandMaterialize(folderOf(it.abs));
+		// a hit was chosen: the program opens it (Modland's songs are downloaded first) or shows the folder in Disk Op.
+		const act = (i, showFolder) => {
+			if (i < 0 || i >= S.results.length) return;
 			close();
-			Module.ccall('webLoadFile', null, ['string'], [it.abs]); // songs, instruments and samples (like dropping a file)
+			Module.ccall('webSearchAct', 'number', ['number', 'number', 'number'], [i, showFolder ? 1 : 0, WHAT[S.what]]);
 		};
 
 		const open = () => {
 			if (!BT2.started || !Module.bt2FS || S.open) return;
 			try {
 				try { applyColors(); } catch (e) {}
-				S.own = buildOwn();
+				Module._webSearchOpen(); // (the user's own files as they are now)
+				if (!S.modReady && BT2.modland.loaded && Module._webSearchModland()) S.modReady = true;
 				syncButtons();
 				box().classList.remove('hidden');
 				S.open = true;
@@ -2026,7 +1873,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
 			else if (e.key === 'PageDown') { e.preventDefault(); move(10); }
 			else if (e.key === 'PageUp') { e.preventDefault(); move(-10); }
-			else if (e.key === 'Enter') { e.preventDefault(); act(S.results[S.sel], e.shiftKey); }
+			else if (e.key === 'Enter') { e.preventDefault(); act(S.sel, e.shiftKey); }
 		};
 
 		// wiring
@@ -2037,9 +1884,9 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			const b = e.target.closest('button');
 			if (b && b.dataset.where) { S.where = b.dataset.where; syncButtons(); run(); return; }
 			if (b && b.dataset.what) { S.what = b.dataset.what; syncButtons(); run(); return; }
-			if (b && b.dataset.more) { S.shown += 200; render(); return; }
+			if (b && b.dataset.more) { showMore(); return; }
 			const r = e.target.closest('.ft-row');
-			if (r) { S.sel = +r.dataset.i; act(S.results[S.sel], !!(b && b.dataset.folder)); }
+			if (r) { S.sel = +r.dataset.i; act(S.sel, !!(b && b.dataset.folder)); }
 		});
 		return { open, close, onKey, isOpen: () => S.open && !box().classList.contains('hidden'), state: S, run };
 	})();
@@ -2288,23 +2135,10 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		else for (const f of Array.from(e.dataTransfer.files || [])) files.push({ file: f, rel: f.name });
 		if (!files.length) return;
 
-		const FS = Module.bt2FS, dir = BT2.importDir();
-		const plain = [];
-		let n = 0, written = null;
-		BT2.lastImportPaths = [];
-		for (const { file, rel } of files) {
-			if (!rel.includes('/')) { plain.push(file); continue; }
-			try { // a dropped folder keeps its folders
-				const parts = rel.split('/').map(BT2.cleanName);
-				const dest = BT2.uniquePath(dir + '/' + parts.join('/'));
-				BT2.mkdirs(dest.slice(0, dest.lastIndexOf('/')));
-				FS.writeFile(dest, new Uint8Array(await file.arrayBuffer()));
-				written = dest;
-				n++;
-			} catch (err) { console.error('drop', rel, err); }
-		}
-		if (plain.length) { n += await BT2.importFiles(plain); written = BT2.lastImportPaths[0] || written; }
-		else { Module._webImportDone(); BT2.syncFiles(); BT2.toast('Kopierte ' + n + ' filer'); }
+		// (the program copies them: bt2_import.c, the same rules as Imp.)
+		const out = {};
+		const n = await BT2.importFiles(files, out);
+		const written = out.first || null;
 
 		// one song/instrument/sample dropped: open it too (like FT2 does) - exactly the file that was written
 		if (files.length === 1 && n === 1 && written && !/\.zip$/i.test(files[0].file.name))

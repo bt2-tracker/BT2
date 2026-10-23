@@ -75,8 +75,9 @@ void bt2UrlEncodePath(const char *path, char *out, size_t outLen)
 	out[o] = '\0';
 }
 
-#if !defined _WIN32 && !defined __EMSCRIPTEN__ && !defined BT2_NET_TEST
-// other systems (Linux, macOS) have no download code yet: Modland says "Kunne ikke hente filen"
+#if !defined _WIN32 && !defined BT2_NET_TEST
+// other systems have no download code here: the web version downloads with the page's own code (BT2.download in
+// index.html), Linux and macOS can't download yet
 bool bt2NetGet(const char *url, size_t maxLen, volatile int32_t *cancel, bt2NetProgressFunc progress, void *ud,
 	uint8_t **data, size_t *len, bt2NetResult *res)
 {
