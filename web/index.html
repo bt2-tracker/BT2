@@ -158,6 +158,7 @@ img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 
 	<div class="status hidden" id="storageWarning" style="color:#F0B060">Kunne ikke lese de lagrede filene dine. For å beskytte dem lagres
 		ingenting i denne økten. Lukk appen helt og åpne den igjen.</div>
 	<div class="mode" id="pcHint" style="display:none">PC: trykk <b>Alt+Enter</b> for fullskjerm, da virker alle FT2-tastene.</div>
+	<div class="mode" id="ctrlHint" style="display:none">Hold <b>Ctrl</b> og trykk <b>pil opp/ned</b> for å hoppe 16 rader om gangen (som PgUp/PgDn).</div>
 	<div class="mode" id="touchHint" style="display:none">Skjermtastatur: trykk raskt med <b>to fingre</b> på FT2-skjermen (eller Ctrl+K).</div>
 	<div class="row">
 		<button class="small" id="diagButton">Lydtest</button>
@@ -215,7 +216,7 @@ img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.27';
+	const BT2_VERSION = '0.28';
 	const BT2_DATE = '23.10.2026';
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
@@ -1530,6 +1531,8 @@ registerProcessor('bt2-queue', BT2Queue);`;
 
 		appStarted() {
 			try { if (!BT2.isApple() && !(navigator.maxTouchPoints > 0)) $('pcHint').style.display = ''; } catch (e) {}
+			// Ctrl+Up/Down = PgUp/PgDn (v0.27). Not on Mac: there the system uses Ctrl+Up/Down (Mission Control)
+			try { if (['windows', 'linux', 'ipad'].includes(BT2.platform().os)) $('ctrlHint').style.display = ''; } catch (e) {}
 			try {
 				if (BT2.fullscreenChoicePossible()) {
 					$('fullscreenOption').checked = BT2.fullscreenAtStart();

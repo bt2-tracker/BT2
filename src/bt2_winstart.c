@@ -49,6 +49,8 @@
                          "En oppdatering endrer bare selve programmet – låtene, samplene, mappene og innstillingene " \
                          "dine blir aldri rørt."
 #define HINT_PC          "Trykk <b>Alt+Enter</b> for fullskjerm (<b>Esc</b> går ut igjen)."
+#define HINT_CTRL_A      "Hold <b>Ctrl</b> og trykk <b>pil opp/ned</b>" // (one line, or two in a narrow window)
+#define HINT_CTRL_B      "for å hoppe 16 rader om gangen (som PgUp/PgDn)."
 #define CREDITS_A        "Basert på "
 #define CREDITS_LINK     "ft2-clone"
 #define CREDITS_B        "av Olav «8bitbubsy» Sørensen (BSD-3)."
@@ -708,13 +710,38 @@ static float buildStart(bt2Canvas *c, float top)
 	// updates
 	y += buildAppBox(c, cx, y) + gap;
 
-	// a tip
+	// the tips
 	if (c != NULL)
 	{
 		const float hw = bt2RichWidth(f13, HINT_PC) / s;
 		bt2DrawRich(c, f13, snapPx(cx - hw * 0.5f), y * s, l13 * s, C_DIM, C_TEXT, HINT_PC);
 	}
 	y += l13 + gap;
+
+	// Ctrl+Up/Down = PgUp/PgDn (v0.27, as #ctrlHint on the web page)
+	{
+		const float wa = bt2RichWidth(f13, HINT_CTRL_A) / s, wb = bt2RichWidth(f13, HINT_CTRL_B) / s;
+		const float space = widthCss(f13, " ");
+		if (wa + space + wb <= textW)
+		{
+			if (c != NULL)
+			{
+				const float x = cx - (wa + space + wb) * 0.5f;
+				bt2DrawRich(c, f13, snapPx(x), y * s, l13 * s, C_DIM, C_TEXT, HINT_CTRL_A);
+				bt2DrawRich(c, f13, snapPx(x + wa + space), y * s, l13 * s, C_DIM, C_TEXT, HINT_CTRL_B);
+			}
+			y += l13 + gap;
+		}
+		else
+		{
+			if (c != NULL)
+			{
+				bt2DrawRich(c, f13, snapPx(cx - wa * 0.5f), y * s, l13 * s, C_DIM, C_TEXT, HINT_CTRL_A);
+				bt2DrawRich(c, f13, snapPx(cx - wb * 0.5f), (y + l13) * s, l13 * s, C_DIM, C_TEXT, HINT_CTRL_B);
+			}
+			y += 2.0f * l13 + gap;
+		}
+	}
 
 	// «Lydtest» and «Åpne BT2-mappa» (where the web version has «Sikkerhetskopi (zip)»: on a PC the files
 	// are in an ordinary folder, so this shows them)
