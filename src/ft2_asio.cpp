@@ -284,7 +284,7 @@ static long asioMessage(long selector, long value, void *message, double *opt)
 
 // ------------------------------------------------------------------------------------------------
 
-// the buffer size nearest to the chosen one, that the driver allows
+// the buffer size nearest to what FT2's latency setting asks for, that the driver allows
 static long chooseBufferSize(long wanted, long minSize, long maxSize, long preferred, long granularity)
 {
 	if (minSize <= 0 || maxSize < minSize || granularity == 0)
@@ -312,7 +312,7 @@ static void fail(const char *status, const char *info)
 	winAsioClose();
 }
 
-SDL_AudioDeviceID winAsioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have, int32_t bufferSamples)
+SDL_AudioDeviceID winAsioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have, int32_t bufferSetting)
 {
 	winAsioClose();
 
@@ -381,8 +381,8 @@ SDL_AudioDeviceID winAsioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *w
 		return 0;
 	}
 
-	// v0.32: the buffer chosen on the start screen, 32-512 samples (the nearest the driver allows)
-	const long wanted = bufferSamples;
+	// FT2's "Smaller/Medium/Bigger latency" = 64 / 256 / 512 samples (the nearest the driver allows)
+	const long wanted = (bufferSetting >= 2048) ? 512 : (bufferSetting >= 1024) ? 256 : 64;
 	blockFrames = chooseBufferSize(wanted, minSize, maxSize, preferred, granularity);
 	if (blockFrames <= 0 || blockFrames > 16384)
 	{

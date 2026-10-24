@@ -16,11 +16,11 @@ extern "C" {
 #define WIN_ASIO_DEVICE_ID 0x7FFF0002
 
 /* Opens the ASIO driver (ASIO4ALL if it is installed, else the first one) and starts mixing with FT2's
-** callback (paused, like SDL). bufferSamples: the buffer chosen on the start screen, 32-512 samples
-** (or the nearest the driver allows).
+** callback (paused, like SDL). bufferSetting: FT2's 512/1024/2048 ("Smaller/Medium/Bigger latency") =
+** 64 / 256 / 512 samples (or the nearest the driver allows).
 ** Returns WIN_ASIO_DEVICE_ID, or 0 if there is no ASIO driver or it couldn't be started.
 */
-SDL_AudioDeviceID winAsioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have, int32_t bufferSamples); // (v0.32: 32-512 samples)
+SDL_AudioDeviceID winAsioOpen(SDL_AudioCallback callback, const SDL_AudioSpec *want, SDL_AudioSpec *have, int32_t bufferSetting);
 
 void winAsioClose(void);
 void winAsioLock(void);

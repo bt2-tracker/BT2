@@ -132,7 +132,7 @@ static void drawFPSCounter(void)
 	snprintf(audioBufLine, sizeof (audioBufLine), "Audio buffer samples: %d (expected %d)", audio.haveSamples, audio.wantSamples);
 #ifdef _WIN32
 	if (winAsioActive() || winExclusiveActive())
-		snprintf(audioBufLine, sizeof (audioBufLine), "%s: %d samples (%.2fms)", winAsioActive() ? "ASIO" : winExclusiveShared() ? "Shared (small blocks)" : "Exclusive",
+		snprintf(audioBufLine, sizeof (audioBufLine), "%s: %d samples (%.2fms)", winAsioActive() ? "ASIO" : "Exclusive",
 			audio.haveSamples, (audio.haveFreq > 0) ? (audio.haveSamples * 1000.0) / audio.haveFreq : 0.0);
 #endif
 
