@@ -113,7 +113,9 @@ typedef struct config_t // exact FT2.CFG layout (with some modifications)
 	uint8_t interpolation, internMode, stereoMode;
 	uint8_t specialFlags2; // was lo-byte of "sample16Bit" (was used for external audio sampling)
 	uint8_t dontShowAgainFlags; // was hi-byte of "sample16Bit" (was used for external audio sampling)
-	int16_t inEnhet, sbPort, sbDMA, sbHiDMA, sbInt, sbOutFilter;
+	int16_t inEnhet;
+	int16_t bt2BufSamples; // BerntTracker (Windows, v0.32): the buffer chosen on the start screen, 32/64/128/256/512 samples (was "sbPort", never used)
+	int16_t sbDMA, sbHiDMA, sbInt, sbOutFilter;
 	uint8_t true16Bit, ptnStretch, ptnHex, ptnInstrZero, ptnFrmWrk, ptnLineLight, ptnShowVolColumn, ptnChnNumbers;
 	int16_t ptnLineLightStep, ptnFont, ptnAcc;
 	pal16 userPal[16];
@@ -169,6 +171,8 @@ config_t;
 #endif
 
 void resetConfig(void);
+int32_t bt2BufferSamples(void); // BerntTracker (Windows, v0.32): 32/64/128/256/512 (from FT2's latency setting if not chosen)
+void bt2SetBufferSamples(int32_t samples); // (also sets FT2's latency setting: <=128 Smaller, 256 Medium, 512 Bigger)
 bool loadConfig(bool showErrorFlag);
 void loadConfig2(void); // called by "Load config" button
 bool saveConfig(bool showErrorFlag);

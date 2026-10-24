@@ -45,7 +45,7 @@
 #define LABEL_BUFFER     "Lydbuffer:"
 #define LABEL_SYSTEM     "Lydsystem:"   // (v0.31: ASIO or Windows' ordinary sound, only in the Windows program)
 #define LABEL_FOLDER     "Åpne BT2-mappa"
-#define NOTE_BUFFER      "Minst gir lavest forsinkelse. Knitrer lyden, velg Normal eller Stor."
+#define NOTE_BUFFER      "Antall samples: færre gir lavere forsinkelse. Knitrer lyden, velg et større tall."
 #define NOTE_APP         "Appen sjekker etter ny versjon hver gang den åpnes, og du velger selv om du vil oppdatere. " \
                          "En oppdatering endrer bare selve programmet – låtene, samplene, mappene og innstillingene " \
                          "dine blir aldri rørt."
@@ -72,7 +72,7 @@ static const buttonStyle styleSmallOn = { 15.0f, 400, 18.0f, 10.0f,  8.0f, 1.0f,
 
 enum
 {
-	HIT_START, HIT_FULLSCREEN, HIT_BUFFER0, HIT_BUFFER1, HIT_BUFFER2, HIT_UPDATE_NOW, HIT_UPDATE_LATER,
+	HIT_START, HIT_FULLSCREEN, HIT_BUFFER0, HIT_BUFFER1, HIT_BUFFER2, HIT_BUFFER3, HIT_BUFFER4, HIT_UPDATE_NOW, HIT_UPDATE_LATER,
 	HIT_DIAG, HIT_FOLDER, HIT_LINK, HIT_DIAG_CLOSE, HIT_SYSTEM0, HIT_SYSTEM1,
 	HIT_COUNT
 };
@@ -92,7 +92,10 @@ static SDL_Cursor *arrowCursor, *handCursor;
 static bool optFullscreen, updateBoxHidden, diagOpen, restartFailed, startFocused;
 static char toastText[120];
 static uint64_t toastUntil;
-static int32_t bufferChoice; // 0 = Minst, 1 = Normal, 2 = Stor (FT2's Smaller/Medium/Bigger latency)
+static int32_t bufferChoice; // v0.32: 0..4 = 32, 64, 128, 256, 512 samples (see bt2BufferSamples() in ft2_config.c)
+#define NUM_BUFFERS 5
+static const int32_t bufferSamplesList[NUM_BUFFERS] = { 32, 64, 128, 256, 512 };
+static const char *bufferLabels[NUM_BUFFERS] = { "32", "64", "128", "256", "512" };
 static bt2UpdateInfo upd;
 static char audioLine[200];
 static char systemNote[200]; // (v0.31: why ASIO isn't used although it is chosen, or empty)
@@ -204,8 +207,8 @@ static int32_t latencyMs(void) // -1 = not known
 		return (int32_t)floor((frames * 1000.0) / audio.haveFreq + 0.5);
 	}
 
-	if (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) // (its block, plus the one being played)
-		return (int32_t)floor((audio.haveSamples * 2 * 1000.0) / audio.haveFreq + 0.5);
+	if (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) // (its block, plus the one being played; shared: plus Windows' mixer)
+		return (int32_t)floor((audio.haveSamples * (winExclusiveShared() ? 3 : 2) * 1000.0) / audio.haveFreq + 0.5);
 
 	return -1;
 }
@@ -213,7 +216,7 @@ static int32_t latencyMs(void) // -1 = not known
 static const char *engineName(void)
 {
 	if (audio.dev == WIN_ASIO_DEVICE_ID) return "ASIO";
-	if (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) return "Windows eksklusiv";
+	if (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) return winExclusiveShared() ? "Windows vanlig" : "Windows eksklusiv";
 	if (audio.dev != 0) return "Windows vanlig";
 	return "ingen lydenhet";
 }
@@ -226,7 +229,7 @@ static void buildAudioLine(void)
 	if (audio.dev == 0)
 		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b>", engineName());
 	else if (ms > 0)
-		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b> · %u Hz · ca. %d ms", engineName(), audio.haveFreq, ms);
+		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b> · %u Hz · %u samples · ca. %d ms", engineName(), audio.haveFreq, audio.haveSamples, ms);
 	else
 		snprintf(audioLine, sizeof (audioLine), "Lyd: <b>%s</b> · %u Hz · buffer %u samples", engineName(), audio.haveFreq, audio.haveSamples);
 
@@ -236,25 +239,42 @@ static void buildAudioLine(void)
 static void buildSystemNote(void)
 {
 	systemNote[0] = '\0';
+
+	// v0.32: the driver couldn't give the chosen buffer
+	const bool ownOutput = (audio.dev == WIN_ASIO_DEVICE_ID || audio.dev == WIN_EXCLUSIVE_DEVICE_ID);
+	const bool asioMissing = !(config.specialFlags2 & WIN_SHARED_AUDIO) && audio.dev != WIN_ASIO_DEVICE_ID;
+	if (ownOutput && !asioMissing && audio.haveSamples > 0 && (int32_t)audio.haveSamples != bt2BufferSamples())
+	{
+		snprintf(systemNote, sizeof (systemNote), "Lyddriveren tillater ikke %d samples, så den nærmeste den kan (%u) brukes.",
+			bt2BufferSamples(), audio.haveSamples);
+		return;
+	}
+
+	if ((config.specialFlags2 & WIN_SHARED_AUDIO) && !ownOutput && audio.dev != 0)
+	{
+		snprintf(systemNote, sizeof (systemNote), "Windows tillot ikke små blokker her, så Windows' vanlige lyd brukes (%u samples).", audio.haveSamples);
+		return;
+	}
+
 	if ((config.specialFlags2 & WIN_SHARED_AUDIO) || audio.dev == WIN_ASIO_DEVICE_ID)
 		return;
 
 	if (!winAsioInstalled())
-		snprintf(systemNote, sizeof (systemNote), "Fant ingen ASIO-driver (f.eks. ASIO4ALL), så lyden går via %s.", (audio.dev == WIN_EXCLUSIVE_DEVICE_ID) ? "Windows eksklusiv" : "Windows vanlig");
+		snprintf(systemNote, sizeof (systemNote), "Fant ingen ASIO-driver (f.eks. ASIO4ALL), så lyden går via %s.", (audio.dev == WIN_EXCLUSIVE_DEVICE_ID && !winExclusiveShared()) ? "Windows eksklusiv" : "Windows vanlig");
 	else
 		snprintf(systemNote, sizeof (systemNote), "ASIO startet ikke. Lukk andre programmer som bruker lyden, og velg ASIO på nytt.");
 }
 
 static int32_t bufferChoiceFromConfig(void)
 {
-	if (config.specialFlags & BUFFSIZE_512) return 0;
-	if (config.specialFlags & BUFFSIZE_2048) return 2;
-	return 1;
-}
+	const int32_t n = bt2BufferSamples();
+	for (int32_t i = 0; i < NUM_BUFFERS; i++)
+	{
+		if (bufferSamplesList[i] == n)
+			return i;
+	}
 
-static const char *bufferName(int32_t choice)
-{
-	return (choice == 0) ? "Minst" : (choice == 2) ? "Stor" : "Normal";
+	return 3;
 }
 
 static void windowsVersion(char *out, size_t outLen)
@@ -294,7 +314,7 @@ static void buildDiagText(char *out, size_t outLen)
 	}
 	else if (audio.dev == WIN_EXCLUSIVE_DEVICE_ID)
 	{
-		snprintf(engine, sizeof (engine), "Windows eksklusiv (WASAPI)");
+		snprintf(engine, sizeof (engine), winExclusiveShared() ? "Windows vanlig (delt, små blokker)" : "Windows eksklusiv (WASAPI)");
 	}
 	else if (audio.dev != 0)
 	{
@@ -307,12 +327,12 @@ static void buildDiagText(char *out, size_t outLen)
 
 	if (audio.haveFreq > 0)
 	{
-		snprintf(buffer, sizeof (buffer), "%s, %u samples (%.1f ms) (velges på startskjermen)", bufferName(bufferChoice),
+		snprintf(buffer, sizeof (buffer), "valgt %d, i bruk %u samples (%.1f ms) (velges på startskjermen)", bufferSamplesList[bufferChoice],
 			audio.haveSamples, (audio.haveSamples * 1000.0) / audio.haveFreq);
 	}
 	else
 	{
-		snprintf(buffer, sizeof (buffer), "%s", bufferName(bufferChoice));
+		snprintf(buffer, sizeof (buffer), "valgt %d samples", bufferSamplesList[bufferChoice]);
 	}
 
 	windowsVersion(win, sizeof (win));
@@ -713,22 +733,15 @@ static float buildStart(bt2Canvas *c, float top)
 			}
 		}
 		y += rowH + gap;
-
-		if (systemNote[0] != '\0')
-		{
-			const float hSys = linesCss(f13, textW, l13, systemNote);
-			text(c, f13, 16.0f, y, textW, l13, BT2_ALIGN_CENTER, C_DIM, systemNote);
-			y += hSys + gap;
-		}
 	}
 
-	// «Lydbuffer: Minst Normal Stor»
+	// «Lydbuffer: 32 64 128 256 512» (v0.32, samples; the web page has Minst/Normal/Stor)
 	{
-		static const char *names[3] = { "Minst", "Normal", "Stor" };
-		float w[3], rowH = 44.0f;
+		const char **names = bufferLabels;
+		float w[NUM_BUFFERS], rowH = 44.0f;
 		const float labelW = widthCss(f13, LABEL_BUFFER);
 		float total = labelW;
-		for (int32_t i = 0; i < 3; i++)
+		for (int32_t i = 0; i < NUM_BUFFERS; i++)
 		{
 			float hh;
 			buttonSize(&styleSmall, names[i], &w[i], &hh);
@@ -743,13 +756,21 @@ static float buildStart(bt2Canvas *c, float top)
 			text(c, f13, x, y + (rowH - l13) * 0.5f, labelW + 4.0f, l13, BT2_ALIGN_LEFT, C_DIM, LABEL_BUFFER);
 			x += labelW + 10.0f;
 
-			for (int32_t i = 0; i < 3; i++)
+			for (int32_t i = 0; i < NUM_BUFFERS; i++)
 			{
 				drawButton(c, (bufferChoice == i) ? &styleSmallOn : &styleSmall, names[i], x, y, w[i], rowH, HIT_BUFFER0 + i);
 				x += w[i] + 10.0f;
 			}
 		}
 		y += rowH + gap;
+	}
+
+	// why ASIO or the chosen buffer isn't used (v0.31/0.32, only then)
+	if (systemNote[0] != '\0')
+	{
+		const float hSys = linesCss(f13, textW, l13, systemNote);
+		text(c, f13, 16.0f, y, textW, l13, BT2_ALIGN_CENTER, C_TEXT, systemNote);
+		y += hSys + gap;
 	}
 
 	// the note under it
@@ -1072,10 +1093,12 @@ static void setBufferChoice(int32_t choice)
 		return;
 
 	bufferChoice = choice;
-	config.specialFlags &= ~(BUFFSIZE_512 + BUFFSIZE_1024 + BUFFSIZE_2048);
-	config.specialFlags |= (choice == 0) ? BUFFSIZE_512 : (choice == 2) ? BUFFSIZE_2048 : BUFFSIZE_1024;
+	bt2SetBufferSamples(bufferSamplesList[choice]); // (also FT2's Smaller/Medium/Bigger latency, for its normal output)
+	const uint8_t flagsSet = config.specialFlags & (BUFFSIZE_512 + BUFFSIZE_1024 + BUFFSIZE_2048);
 
 	setNewAudioSettings(); // (opens the sound again with the new buffer right away)
+	if ((config.specialFlags & (BUFFSIZE_512 + BUFFSIZE_1024 + BUFFSIZE_2048)) != flagsSet)
+		config.bt2BufSamples = 0; // (it didn't work and FT2 went back to the old setting: follow that)
 	saveConfig(CONFIG_HIDE_ERRORS);
 	bufferChoice = bufferChoiceFromConfig(); // (FT2 goes back to the old one if the new one doesn't work)
 	buildAudioLine();
@@ -1194,6 +1217,8 @@ bool bt2StartScreen(void)
 						case HIT_BUFFER0:
 						case HIT_BUFFER1:
 						case HIT_BUFFER2:
+						case HIT_BUFFER3:
+						case HIT_BUFFER4:
 							setBufferChoice(h - HIT_BUFFER0);
 							needRender = true;
 							break;

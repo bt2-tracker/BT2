@@ -10,6 +10,12 @@
 ** FT2's mixer is the same: its callback is called from here instead of from SDL, in FT2's own 16-bit or
 ** 32-bit float format, and the samples are then converted to the sound card's format.
 **
+** v0.31/0.32: also Windows' ordinary (shared) sound with small blocks, when "Windows" is chosen on the
+** start screen: Windows 10's low-latency shared mode (IAudioClient3), with the buffer chosen on the start
+** screen (32-512 samples), or the nearest the sound card driver allows. Other programs can still play
+** sound. If the driver only allows Windows' usual ~10 ms, that is used; if Windows is older than 10, FT2's
+** normal output (SDL) is used as before.
+**
 ** Everything that talks to the sound card (opening, filling blocks, closing) happens on one thread of its
 ** own, with Windows' "Pro Audio" priority. The program only starts it, waits until it says whether the
 ** sound card could be opened, and stops it again.
@@ -38,6 +44,7 @@ static const IID BT2_IID_IAudioClient = { 0x1cb9ad4c, 0xdbfa, 0x4c32, { 0xb1, 0x
 static const IID BT2_IID_IAudioRenderClient = { 0xf294acfc, 0x3146, 0x4483, { 0xa7, 0xbf, 0xad, 0xdc, 0xa7, 0xc2, 0x60, 0xe2 } };
 static const GUID BT2_SUBTYPE_PCM = { 0x00000001, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
 static const GUID BT2_SUBTYPE_FLOAT = { 0x00000003, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
+static const IID BT2_IID_IAudioClient3 = { 0x7ed4ee07, 0x8e67, 0x4cd4, { 0x8c, 0x1a, 0x2b, 0x7a, 0x59, 0x87, 0xad, 0x42 } };
 static const PROPERTYKEY BT2_PKEY_Device_FriendlyName = { { 0xa45c254e, 0xdf1c, 0x4efd, { 0x80, 0x20, 0x67, 0xd1, 0x46, 0xa8, 0x50, 0xe0 } }, 14 };
 
 #define BT2_STREAMFLAGS_EVENTCALLBACK 0x00040000
@@ -48,7 +55,7 @@ static const PROPERTYKEY BT2_PKEY_Device_FriendlyName = { { 0xa45c254e, 0xdf1c, 
 #define BT2_SPEAKER_FRONT_LEFT 0x1
 #define BT2_SPEAKER_FRONT_RIGHT 0x2
 
-#define MIN_PERIOD_100NS 13333 // ~1.3 ms (64 samples at 48 kHz): the smallest block we ask for
+#define MIN_PERIOD_100NS 6667 // ~0.67 ms (32 samples at 48 kHz): the smallest block we ask for // ~1.3 ms (64 samples at 48 kHz): the smallest block we ask for
 #define MAX_LOSSES 3 // the sound card stopped this many times in a row: use the normal output for this session
 
 typedef struct
@@ -64,9 +71,9 @@ static const sampleType_t typesFor32[] = { { 32, 32, true }, { 32, 32, false }, 
 
 // what the program asks for (set before the sound thread starts)
 static char wantDevice[512];
-static int32_t wantRate, wantBufferSetting;
+static int32_t wantRate, wantSamples;
 static SDL_AudioCallback mixCallback;
-static bool mix16;
+static bool mix16, sharedMode;
 
 // the sound thread's own (only it touches these, until it has stopped)
 static IMMDevice *dev;
@@ -81,7 +88,7 @@ static CRITICAL_SECTION lock;
 static bool lockReady, active;
 static volatile LONG quitThread, pausedFlag, lostFlag, openOk;
 static int32_t lossCount;
-static uint32_t blockFrames;
+static uint32_t blockFrames, bufferFrames; // (one block; and in shared mode the whole buffer, bigger)
 static int32_t devChannels, devBits, devValidBits, devRate;
 static bool devFloat;
 static char statusText[32], infoText[160];
@@ -210,6 +217,121 @@ static void setFailure(HRESULT hr)
 	}
 }
 
+/* IAudioClient3 (Windows 10): called through its table of functions, so it works with any Windows headers.
+** The table: IUnknown (3), IAudioClient (12), IAudioClient2 (3), then IAudioClient3's own three.
+*/
+typedef HRESULT (STDMETHODCALLTYPE *getSharedModeEnginePeriod_t)(void *, const WAVEFORMATEX *, UINT32 *, UINT32 *, UINT32 *, UINT32 *);
+typedef HRESULT (STDMETHODCALLTYPE *initializeSharedAudioStream_t)(void *, DWORD, UINT32, const WAVEFORMATEX *, LPCGUID);
+#define VT_GET_SHARED_MODE_ENGINE_PERIOD 18
+#define VT_INITIALIZE_SHARED_AUDIO_STREAM 20
+
+// the shared mode's format = Windows' own mix format for the sound card (no conversion in Windows)
+static bool readFormat(const WAVEFORMATEX *f)
+{
+	devChannels = f->nChannels;
+	devBits = f->wBitsPerSample;
+	devValidBits = f->wBitsPerSample;
+	devRate = (int32_t)f->nSamplesPerSec;
+
+	if (f->wFormatTag == WAVE_FORMAT_EXTENSIBLE)
+	{
+		const WAVEFORMATEXTENSIBLE *e = (const WAVEFORMATEXTENSIBLE *)f;
+		devValidBits = e->Samples.wValidBitsPerSample;
+		if (memcmp(&e->SubFormat, &BT2_SUBTYPE_FLOAT, sizeof (GUID)) == 0) devFloat = true;
+		else if (memcmp(&e->SubFormat, &BT2_SUBTYPE_PCM, sizeof (GUID)) == 0) devFloat = false;
+		else return false;
+	}
+	else if (f->wFormatTag == 3) // WAVE_FORMAT_IEEE_FLOAT
+	{
+		devFloat = true;
+	}
+	else if (f->wFormatTag == WAVE_FORMAT_PCM)
+	{
+		devFloat = false;
+	}
+	else
+	{
+		return false;
+	}
+
+	if (devChannels < 2 || devRate < 8000 || devRate > 192000)
+		return false;
+	if (devFloat ? (devBits != 32) : (devBits != 16 && devBits != 24 && devBits != 32))
+		return false;
+
+	return true;
+}
+
+static bool openShared(void)
+{
+	WAVEFORMATEX *mixFormat = NULL;
+	void *client3 = NULL;
+	bool ok = false;
+
+	if (SUCCEEDED(IAudioClient_GetMixFormat(client, &mixFormat)) && mixFormat != NULL && readFormat(mixFormat) &&
+		SUCCEEDED(IAudioClient_QueryInterface(client, &BT2_IID_IAudioClient3, &client3)) && client3 != NULL)
+	{
+		void **vt = *(void ***)client3;
+		UINT32 defFrames = 0, fundFrames = 0, minFrames = 0, maxFrames = 0;
+		HRESULT hr = ((getSharedModeEnginePeriod_t)vt[VT_GET_SHARED_MODE_ENGINE_PERIOD])(client3, mixFormat,
+			&defFrames, &fundFrames, &minFrames, &maxFrames);
+
+		if (SUCCEEDED(hr) && fundFrames > 0 && minFrames > 0 && maxFrames >= minFrames)
+		{
+			// the chosen buffer, or the nearest the driver allows (from its smallest, in steps of 'fund')
+			const UINT32 want = (UINT32)wantSamples;
+			UINT32 period = minFrames;
+			while (period < want && period + fundFrames <= maxFrames)
+				period += fundFrames;
+
+			hr = ((initializeSharedAudioStream_t)vt[VT_INITIALIZE_SHARED_AUDIO_STREAM])(client3, BT2_STREAMFLAGS_EVENTCALLBACK,
+				period, mixFormat, NULL);
+
+			if (SUCCEEDED(hr))
+			{
+				blockFrames = period;
+				ok = true;
+			}
+		}
+	}
+
+	if (client3 != NULL)
+		((IUnknown *)client3)->lpVtbl->Release((IUnknown *)client3);
+	if (mixFormat != NULL)
+		CoTaskMemFree(mixFormat);
+
+	if (!ok)
+	{
+		strcpy(statusText, "n/a");
+		strcpy(infoText, "Shared mode with small blocks: not possible here, using normal output");
+		return false;
+	}
+
+	bufferFrames = 0;
+	blockEvent = CreateEventW(NULL, FALSE, FALSE, NULL);
+	if (FAILED(IAudioClient_GetBufferSize(client, &bufferFrames)) || bufferFrames < blockFrames || blockFrames == 0 ||
+		blockFrames > 65535 || blockEvent == NULL || FAILED(IAudioClient_SetEventHandle(client, blockEvent)) ||
+		FAILED(IAudioClient_GetService(client, &BT2_IID_IAudioRenderClient, (void **)&render)) || render == NULL)
+	{
+		setFailure(E_FAIL);
+		return false;
+	}
+
+	mixBuffer = (uint8_t *)calloc(blockFrames, 8); // (stereo, up to 32-bit float)
+	if (mixBuffer == NULL)
+	{
+		setFailure(E_FAIL);
+		return false;
+	}
+
+	const double blockMs = (blockFrames * 1000.0) / devRate;
+	snprintf(statusText, sizeof (statusText), "%.1fms", blockMs);
+	snprintf(infoText, sizeof (infoText), "Shared mode, small blocks: %dHz, %d-bit%s, %u samples (%.2fms)",
+		devRate, devValidBits, devFloat ? " float" : "", (unsigned)blockFrames, blockMs);
+
+	return true;
+}
+
 static bool openSoundCard(void)
 {
 	IMMDeviceEnumerator *enumerator = NULL;
@@ -228,6 +350,9 @@ static bool openSoundCard(void)
 		return false;
 	}
 
+	if (sharedMode)
+		return openShared();
+
 	// the sound card's own format (for its rate, and its channels if it has no plain stereo)
 	int32_t mixRate = 48000, mixChannels = 2;
 	DWORD mixMask = 0;
@@ -241,7 +366,8 @@ static bool openSoundCard(void)
 		CoTaskMemFree(mixFormat);
 	}
 
-	// block size: FT2's "Smaller latency" = the sound card's smallest, "Medium" ~10 ms, "Bigger" ~20 ms
+	// block size (v0.32): the buffer chosen on the start screen (32-512 samples at the sound card's rate),
+	// but not smaller than the sound card's smallest
 	REFERENCE_TIME defaultPeriod = 0, minPeriod = 0;
 	IAudioClient_GetDevicePeriod(client, &defaultPeriod, &minPeriod);
 	if (minPeriod <= 0)
@@ -249,11 +375,9 @@ static bool openSoundCard(void)
 	if (minPeriod < MIN_PERIOD_100NS)
 		minPeriod = MIN_PERIOD_100NS;
 
-	REFERENCE_TIME period = minPeriod;
-	if (wantBufferSetting >= 2048 && period < 200000)
-		period = 200000;
-	else if (wantBufferSetting >= 1024 && wantBufferSetting < 2048 && period < 100000)
-		period = 100000;
+	REFERENCE_TIME period = (REFERENCE_TIME)((10000000.0 * wantSamples) / ((mixRate > 0) ? mixRate : 48000) + 0.5);
+	if (period < minPeriod)
+		period = minPeriod;
 
 	// FT2's rate first, then the sound card's own, then the usual ones; stereo first
 	const int32_t rates[4] = { wantRate, mixRate, 48000, 44100 };
@@ -406,8 +530,20 @@ static void convertBlock(const uint8_t *src, BYTE *dst, uint32_t frames)
 
 static bool fillBlock(void)
 {
+	HRESULT hr;
+	if (sharedMode) // (the buffer is shared with Windows' mixer: one block in when there is room for it)
+	{
+		UINT32 padding = 0;
+		hr = IAudioClient_GetCurrentPadding(client, &padding);
+		if (FAILED(hr))
+			return hr != BT2_E_DEVICE_INVALIDATED;
+
+		if (padding + blockFrames > bufferFrames)
+			return true;
+	}
+
 	BYTE *data = NULL;
-	HRESULT hr = IAudioRenderClient_GetBuffer(render, blockFrames, &data);
+	hr = IAudioRenderClient_GetBuffer(render, blockFrames, &data);
 	if (FAILED(hr) || data == NULL)
 		return hr != BT2_E_DEVICE_INVALIDATED; // (the sound card went away: stop, the program opens the sound again)
 
@@ -497,7 +633,7 @@ static DWORD WINAPI soundThread(LPVOID unused)
 // called by the program (ft2_audio.c)
 
 SDL_AudioDeviceID winExclusiveOpen(const char *deviceName, SDL_AudioCallback callback, const SDL_AudioSpec *want,
-	SDL_AudioSpec *have, int32_t bufferSetting)
+	SDL_AudioSpec *have, int32_t bufferSamples, bool shared)
 {
 	winExclusiveClose();
 
@@ -516,9 +652,10 @@ SDL_AudioDeviceID winExclusiveOpen(const char *deviceName, SDL_AudioCallback cal
 
 	snprintf(wantDevice, sizeof (wantDevice), "%s", (deviceName != NULL) ? deviceName : "");
 	wantRate = want->freq;
-	wantBufferSetting = bufferSetting;
+	wantSamples = (bufferSamples >= 16 && bufferSamples <= 4096) ? bufferSamples : 256;
 	mixCallback = callback;
 	mix16 = (want->format == AUDIO_S16);
+	sharedMode = shared;
 
 	quitThread = 0;
 	lostFlag = 0;
@@ -626,6 +763,11 @@ void winExclusivePause(bool pause)
 bool winExclusiveActive(void)
 {
 	return active;
+}
+
+bool winExclusiveShared(void)
+{
+	return active && sharedMode;
 }
 
 bool winExclusiveDeviceLost(void)

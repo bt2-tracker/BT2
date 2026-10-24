@@ -1637,26 +1637,52 @@ void rbConfigMidiInput(void)
 }
 #endif
 
+/* BerntTracker (Windows, v0.32): the sound buffer in samples, chosen on the start screen (32-512). Used by
+** ASIO and Windows' own sound (as near as the driver allows). FT2's "Smaller/Medium/Bigger latency" in
+** Config > Audio choose 64/256/512, as before. Not chosen yet (or an old FT2.CFG): from that setting.
+*/
+static bool validBufSamples(int32_t n)
+{
+	return n == 32 || n == 64 || n == 128 || n == 256 || n == 512;
+}
+
+int32_t bt2BufferSamples(void)
+{
+	if (validBufSamples(config.bt2BufSamples))
+		return config.bt2BufSamples;
+
+	if (config.specialFlags & BUFFSIZE_512) return 64;
+	if (config.specialFlags & BUFFSIZE_2048) return 512;
+	return 256;
+}
+
+void bt2SetBufferSamples(int32_t samples)
+{
+	if (!validBufSamples(samples))
+		samples = 256;
+
+	config.bt2BufSamples = (int16_t)samples;
+	config.specialFlags &= ~(BUFFSIZE_512 + BUFFSIZE_1024 + BUFFSIZE_2048);
+	config.specialFlags |= (samples <= 128) ? BUFFSIZE_512 : (samples == 256) ? BUFFSIZE_1024 : BUFFSIZE_2048;
+}
+
 void rbConfigAudioShorterLatency(void)
 {
-	config.specialFlags &= ~(BUFFSIZE_1024 + BUFFSIZE_2048);
-	config.specialFlags |= BUFFSIZE_512;
+	bt2SetBufferSamples(64);
 
 	setNewAudioSettings();
 }
 
 void rbConfigAudioMediumLatency(void)
 {
-	config.specialFlags &= ~(BUFFSIZE_512 + BUFFSIZE_2048);
-	config.specialFlags |= BUFFSIZE_1024;
+	bt2SetBufferSamples(256);
 
 	setNewAudioSettings();
 }
 
 void rbConfigAudioBiggerLatency(void)
 {
-	config.specialFlags &= ~(BUFFSIZE_512 + BUFFSIZE_1024);
-	config.specialFlags |= BUFFSIZE_2048;
+	bt2SetBufferSamples(512);
 
 	setNewAudioSettings();
 }

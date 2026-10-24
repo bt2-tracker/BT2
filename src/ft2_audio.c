@@ -1136,9 +1136,14 @@ bool setupAudio(bool showErrorMsg)
 	*/
 	if (!(config.specialFlags2 & WIN_SHARED_AUDIO))
 	{
-		audio.dev = winAsioOpen(audioCallback, &want, &have, configAudioBufSize);
+		audio.dev = winAsioOpen(audioCallback, &want, &have, bt2BufferSamples());
 		if (audio.dev == 0)
-			audio.dev = winExclusiveOpen(device, audioCallback, &want, &have, configAudioBufSize);
+			audio.dev = winExclusiveOpen(device, audioCallback, &want, &have, bt2BufferSamples(), false);
+	}
+	else
+	{
+		// v0.31/0.32: "Windows": Windows' ordinary sound with the chosen buffer (32-512 samples, as near as the driver allows)
+		audio.dev = winExclusiveOpen(device, audioCallback, &want, &have, bt2BufferSamples(), true);
 	}
 
 	if (audio.dev == 0)
