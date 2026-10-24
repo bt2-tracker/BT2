@@ -46,6 +46,7 @@
 #include "bt2_windiskop.h"
 #include "bt2_winoverlay.h"
 #endif
+#include "bt2_rescue.h" // BerntTracker (web and Windows): the rescue copy of an unsaved song
 
 static void initializeVars(void);
 static void cleanUpAndExit(void); // never call this inside the main loop
@@ -284,6 +285,9 @@ int main(int argc, char *argv[])
 		handleThreadEvents();
 		readInput();
 		handleEvents();
+#if defined _WIN32 || defined __EMSCRIPTEN__
+		bt2RescueTick(); // BerntTracker: the rescue copy of an unsaved song (bt2_rescue.c)
+#endif
 		handleRedrawing();
 		flipFrame();
 		endFPSCounter();
@@ -291,6 +295,10 @@ int main(int argc, char *argv[])
 
 	if (config.cfg_AutoSave)
 		saveConfig(CONFIG_HIDE_ERRORS);
+
+#if defined _WIN32 || defined __EMSCRIPTEN__
+	bt2RescueOnExit(); // BerntTracker: closed with an unsaved song: the next start asks (bt2_rescue.c)
+#endif
 
 	cleanUpAndExit();
 	return 0;

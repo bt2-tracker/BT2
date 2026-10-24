@@ -169,6 +169,7 @@ config_t;
 #endif
 
 void resetConfig(void);
+bool configFileExists(void); // BerntTracker (v0.34): FT2.CFG has been saved before (not a new user)
 bool loadConfig(bool showErrorFlag);
 void loadConfig2(void); // called by "Load config" button
 bool saveConfig(bool showErrorFlag);

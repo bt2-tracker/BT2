@@ -128,8 +128,11 @@ void resetChannels(void)
 		unlockAudio();
 }
 
+volatile uint32_t bt2SongEditCount; // BerntTracker: counts changes (the rescue copy is written only after a change)
+
 void setSongModifiedFlag(void)
 {
+	bt2SongEditCount++;
 	song.isModified = true;
 	editor.updateWindowTitle = true;
 }

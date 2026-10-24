@@ -350,6 +350,7 @@ void pbRecPtn(void);
 // ft2_replayer.c
 extern int8_t playMode;
 extern bool songPlaying, audioPaused, musicPaused;
+extern volatile uint32_t bt2SongEditCount; // BerntTracker (see setSongModifiedFlag())
 extern volatile bool replayerBusy;
 extern const uint16_t *note2PeriodLUT;
 extern int16_t patternNumRows[MAX_PATTERNS];

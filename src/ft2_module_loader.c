@@ -27,6 +27,7 @@
 #include "ft2_structs.h"
 #include "ft2_sysreqs.h"
 #include "bt2_find.h" // BerntTracker: the Find screen
+#include "bt2_rescue.h" // BerntTracker: the rescue copy
 
 bool detectBEM(FILE *f);
 bool loadBEM(FILE *f, uint32_t filesize);
@@ -538,6 +539,10 @@ static void setupLoadedModule(void)
 	moduleFailedToLoad = false;
 	moduleLoaded = false;
 	editor.loadMusicEvent = EVENT_NONE;
+
+#if defined _WIN32 || defined __EMSCRIPTEN__
+	bt2RescueAfterLoad(); // BerntTracker: a restored rescue copy gets its own name and folder back (bt2_rescue.c)
+#endif
 }
 
 bool handleModuleLoadFromArg(int argc, char **argv)

@@ -28,6 +28,8 @@ static const char modIDs[32][5] =
 
 static uint16_t packPatt(uint8_t *writePtr, uint8_t *pattPtr, uint16_t numRows);
 
+static bool rescueSave; // BerntTracker: saveXMRescue() is running (see below)
+
 bool saveXM(UNICHAR *filenameU)
 {
 	int16_t i, j, k, a;
@@ -42,7 +44,7 @@ bool saveXM(UNICHAR *filenameU)
 	FILE *f = UNICHAR_FOPEN(filenameU, "wb");
 	if (f == NULL)
 	{
-		okBoxThreadSafe(0, "System message", "Error opening file for saving, is it in use?", NULL);
+		if (!rescueSave) okBoxThreadSafe(0, "System message", "Error opening file for saving, is it in use?", NULL);
 		return false;
 	}
 
@@ -100,13 +102,13 @@ bool saveXM(UNICHAR *filenameU)
 	if (fwrite(&h, sizeof (h), 1, f) != 1)
 	{
 		fclose(f);
-		okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
+		if (!rescueSave) okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
 		return false;
 	}
 
 	for (i = 0; i < h.numPatterns; i++)
 	{
-		if (patternEmpty(i))
+		if (!rescueSave && patternEmpty(i)) // (BerntTracker: not for the rescue copy, it must not change the song)
 		{
 			if (pattern[i] != NULL)
 			{
@@ -127,7 +129,7 @@ bool saveXM(UNICHAR *filenameU)
 			if (fwrite(&ph, ph.headerSize, 1, f) != 1)
 			{
 				fclose(f);
-				okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
+				if (!rescueSave) okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
 				return false;
 			}
 		}
@@ -141,7 +143,7 @@ bool saveXM(UNICHAR *filenameU)
 			if (result != 2) // write was not OK
 			{
 				fclose(f);
-				okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
+				if (!rescueSave) okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
 				return false;
 			}
 		}
@@ -245,14 +247,52 @@ bool saveXM(UNICHAR *filenameU)
 		if (fwrite(&ih, ih.instrSize + (a * sizeof (xmSmpHdr_t)), 1, f) != 1)
 		{
 			fclose(f);
-			okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
+			if (!rescueSave) okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
 			return false;
 		}
 
 		for (k = 1; k <= a; k++)
 		{
 			s = &instr[j]->smp[k-1];
-			if (s->dataPtr != NULL)
+			if (s->dataPtr != NULL && rescueSave)
+			{
+				// BerntTracker: the rescue copy works on a copy of the sample, so the sample itself is never
+				// changed (it may be playing while this is written)
+				const size_t smpBytes = (size_t)SAMPLE_LENGTH_BYTES(s);
+				int8_t *tmp = (int8_t *)malloc(smpBytes + 1);
+				if (tmp == NULL)
+				{
+					fclose(f);
+					return false;
+				}
+
+				memcpy(tmp, s->dataPtr, smpBytes);
+				if (s->isFixed) // (put back what fixSample() wrote after the loop, as unfixSample() does)
+				{
+					for (int32_t t = 0; t < MAX_RIGHT_TAPS; t++)
+					{
+						const int32_t pos = s->fixedPos + t;
+						if (pos < 0 || pos >= s->length)
+							continue;
+
+						if (s->flags & SAMPLE_16BIT)
+							((int16_t *)tmp)[pos] = s->fixedSmp[t];
+						else
+							tmp[pos] = (int8_t)s->fixedSmp[t];
+					}
+				}
+
+				samp2Delta(tmp, s->length, s->flags);
+				result = fwrite(tmp, 1, smpBytes, f);
+				free(tmp);
+
+				if (result != smpBytes)
+				{
+					fclose(f);
+					return false;
+				}
+			}
+			else if (s->dataPtr != NULL)
 			{
 				unfixSample(s);
 				samp2Delta(s->dataPtr, s->length, s->flags);
@@ -265,11 +305,17 @@ bool saveXM(UNICHAR *filenameU)
 				if (result != (size_t)SAMPLE_LENGTH_BYTES(s)) // write not OK
 				{
 					fclose(f);
-					okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
+					if (!rescueSave) okBoxThreadSafe(0, "System message", "Error saving module: general I/O error!", NULL);
 					return false;
 				}
 			}
 		}
+	}
+
+	if (rescueSave) // BerntTracker: the rescue copy changes nothing else (the song is still unsaved)
+	{
+		const bool ok = (fclose(f) == 0);
+		return ok;
 	}
 
 	removeSongModifiedFlag();
@@ -281,6 +327,20 @@ bool saveXM(UNICHAR *filenameU)
 	setMouseBusy(false);
 	return true;
 }
+
+/* BerntTracker (web and Windows): the rescue copy (bt2_rescue.c). The same XM file as saveXM(), but without
+** messages, without marking the song as saved, and without changing the song (saveXM() frees empty patterns
+** and sets their length to 64). Samples are written from a copy, so this can run while the song plays.
+** Called from the main thread.
+*/
+bool saveXMRescue(UNICHAR *filenameU)
+{
+	rescueSave = true;
+	const bool ok = saveXM(filenameU);
+	rescueSave = false;
+	return ok;
+}
+
 
 static bool saveMOD(UNICHAR *filenameU)
 {

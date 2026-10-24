@@ -1637,6 +1637,18 @@ void rbConfigMidiInput(void)
 }
 #endif
 
+bool configFileExists(void) // BerntTracker (v0.34)
+{
+	if (editor.configFileLocationU == NULL)
+		return false;
+#ifdef _WIN32
+	return GetFileAttributesW(editor.configFileLocationU) != INVALID_FILE_ATTRIBUTES;
+#else
+	struct stat st;
+	return stat(editor.configFileLocationU, &st) == 0;
+#endif
+}
+
 void rbConfigAudioShorterLatency(void)
 {
 	config.specialFlags &= ~(BUFFSIZE_1024 + BUFFSIZE_2048);

@@ -30,6 +30,7 @@ char *getDiskOpFilename(void);
 const UNICHAR *getDiskOpCurPath(void);
 const UNICHAR *getDiskOpModPath(void);
 const UNICHAR *getDiskOpSmpPath(void);
+bool diskOpSetModPathUtf8(const char *path); // BerntTracker (the rescue copy)
 void changeFilenameExt(char *name, char *ext, int32_t nameMaxLen);
 void diskOpChangeFilenameExt(char *ext);
 void freeDiskOp(void);

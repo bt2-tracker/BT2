@@ -35,3 +35,4 @@ IDI_MAIN_ICON ICON "gfxdata/icon/bt2.ico" // BerntTracker: the same icon as the 
 
 // BerntTracker: the logo on the start screen (the same picture as the web version's)
 BT2LOGO RCDATA "../web/bt2-logo.png"
+BT2NEWS RCDATA "../web/nytt.txt"

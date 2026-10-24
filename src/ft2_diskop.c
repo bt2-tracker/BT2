@@ -45,6 +45,8 @@
 #include "bt2_diskop.h" // BerntTracker: Disk Op. like on the iPad (web version and Windows program)
 #if defined _WIN32 && !defined __EMSCRIPTEN__
 #include "bt2_winhome.h" // BerntTracker (Windows): the BT2 folders in Documents
+#endif
+#if defined _WIN32 || defined __EMSCRIPTEN__
 #include "bt2_fs.h"
 #endif
 
@@ -174,6 +176,34 @@ const UNICHAR *getDiskOpModPath(void)
 {
 	return FReq_ModCurPathU;
 }
+
+#if defined _WIN32 || defined __EMSCRIPTEN__
+// BerntTracker: Disk Op.'s module folder (UTF-8), e.g. where a restored rescue copy was going to be saved.
+// Only if it is a folder; Disk Op. reads it again.
+bool diskOpSetModPathUtf8(const char *path)
+{
+	if (FReq_ModCurPathU == NULL || path == NULL || path[0] == '\0' || !bt2FsIsDir(path))
+		return false;
+
+#ifdef _WIN32
+	wchar_t *w = bt2Wide(path);
+	if (w == NULL || wcslen(w) > PATH_MAX)
+	{
+		free(w);
+		return false;
+	}
+	wcscpy(FReq_ModCurPathU, w);
+	free(w);
+#else
+	if (strlen(path) > PATH_MAX)
+		return false;
+	strcpy(FReq_ModCurPathU, path);
+#endif
+
+	editor.diskOpReadDir = true;
+	return true;
+}
+#endif
 
 const UNICHAR *getDiskOpSmpPath(void)
 {

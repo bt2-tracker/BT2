@@ -41,6 +41,10 @@ python3 - "$OUT" "$BT2_BUILD" <<'PY'
 import hashlib, json, os, re, sys
 out, build = sys.argv[1], sys.argv[2]
 html = open(os.path.join(out, 'index.html'), encoding='utf-8').read()
+# «Hva er nytt» (v0.34): web/nytt.txt goes into the page (the Windows program has the same text, see ft2-clone.rc)
+if os.path.exists('web/nytt.txt') and '/*BT2_NEWS*/""' in html:
+	html = html.replace('/*BT2_NEWS*/""', json.dumps(open('web/nytt.txt', encoding='utf-8').read()))
+	open(os.path.join(out, 'index.html'), 'w', encoding='utf-8').write(html)
 version = re.search(r"const BT2_VERSION = '([^']*)'", html).group(1)
 date = re.search(r"const BT2_DATE = '([^']*)'", html).group(1)
 names = ['index.html', 'bt2.js', 'bt2.wasm', 'bt2.ww.js', 'bt2.aw.js', 'bt2-compat.js', 'bt2-compat.wasm',

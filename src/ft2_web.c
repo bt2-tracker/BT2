@@ -709,6 +709,11 @@ EMSCRIPTEN_KEEPALIVE void webLoadFile(const char *path)
 		SDL_free(ev.drop.file);
 }
 
+EMSCRIPTEN_KEEPALIVE int32_t webConfigFileExists(void) // (v0.34: «Hva er nytt», a new user sees nothing)
+{
+	return configFileExists() ? 1 : 0;
+}
+
 EMSCRIPTEN_KEEPALIVE int32_t webSongIsModified(void)
 {
 	return song.isModified ? 1 : 0;

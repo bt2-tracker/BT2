@@ -79,6 +79,10 @@ button.small {
 	border: 1px solid #3B4045; border-radius: 8px; padding: 10px 14px; }
 #appStatus { color: var(--text); }
 .appnote { margin-top: 6px; font-size: 12px; }
+.news { text-align: left; }
+.news .newsTitle { color: var(--text); font-weight: 600; text-align: center; margin-bottom: 4px; }
+.news ul { margin: 0; padding-left: 18px; }
+.news li { margin: 3px 0; }
 .appbox .bar { margin: 8px auto 0; }
 #updateText { color: #F0D070; margin-top: 6px; }
 .hidden.bar, div.hidden { display: none; }
@@ -137,6 +141,11 @@ img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 
 	<div class="mode hidden" id="bufferNote">Minst gir lavest forsinkelse. Knitrer lyden, velg Normal eller Stor (siden starter på nytt).</div>
 	<div class="mode hidden" id="winDownload">Windows: <a href="windows/Bernttracker-II-Windows.zip" download>last ned Bernttracker II som program</a> (lavere forsinkelse med ASIO)</div>
 	<div class="mode" id="versionLine"></div>
+	<div class="appbox news hidden" id="newsBox">
+		<div class="newsTitle" id="newsTitle"></div>
+		<ul id="newsList"></ul>
+		<div class="row" style="margin-top:8px"><button class="small" id="newsOk">OK</button></div>
+	</div>
 	<div class="appbox" id="appBox">
 		<div id="appStatus">Sjekker om appen er lagret på denne enheten …</div>
 		<div class="bar hidden" id="appBar"><div id="appProgress"></div></div>
@@ -216,8 +225,9 @@ img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.33';
-	const BT2_DATE = '23.10.2026';
+	const BT2_VERSION = '0.34';
+	const BT2_DATE = '24.10.2026';
+	const BT2_NEWS = /*BT2_NEWS*/""; // (v0.34: web/nytt.txt, put in by web/build_web.sh)
 	const BT2_BUILD = '__BT2_BUILD__';
 	const SCREEN_W = 632, SCREEN_H = 400;
 
@@ -859,7 +869,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			try { BT2.syncFiles(); } catch (e) {} // what was saved gets stored (a file the program was in the middle of writing does not)
 			$('crashTitle').textContent = 'Noe gikk galt';
 			$('crashText').innerHTML = 'Bernttracker II fikk en feil og må startes på nytt.<br>Det du har lagret (Save) er trygt. ' +
-				'Endringer etter siste lagring er dessverre borte.';
+				'Endringer etter siste lagring kan du ofte få tilbake: når appen starter igjen, spør den om du vil hente låta (redningskopien fra det siste minuttet).';
 			$('crashDetail').textContent = String((err && (err.message || err)) || '').slice(0, 300);
 			$('crashWait').classList.add('hidden');
 			$('crash').classList.remove('hidden');
@@ -1548,7 +1558,53 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			try { $('startButton').focus({ preventScroll: true }); } catch (e) {} // (Enter/Space on a keyboard starts too)
 			BT2.starfield.kick();
 			try { BT2.backupReminder(); } catch (e) { console.warn('backup reminder', e); }
+			try { BT2.showNews(); } catch (e) { console.warn('news', e); }
 			BT2.showAudioMode();
+		},
+
+		// «Hva er nytt» (v0.34): once after an update, what is new since the version this device saw last
+		// (web/nytt.txt; the Windows program shows the same text). A new user sees nothing.
+		versionCmp(a, b) {
+			const pa = String(a).split('.').map(Number), pb = String(b).split('.').map(Number);
+			for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+				const d = (pa[i] || 0) - (pb[i] || 0);
+				if (d) return d < 0 ? -1 : 1;
+			}
+			return 0;
+		},
+		parseNews(text) {
+			const out = [];
+			for (const raw of String(text || '').split('\n')) {
+				const line = raw.trim();
+				if (!line || line[0] === '#') continue;
+				const m = /^Versjon\s+([0-9.]+)/.exec(line);
+				if (m) out.push({ v: m[1], items: [] });
+				else if (line.startsWith('- ') && out.length) out[out.length - 1].items.push(line.slice(2));
+			}
+			return out;
+		},
+		markNewsSeen() {
+			try { localStorage.setItem('bt2.newsSeen', BT2_VERSION); } catch (e) {}
+		},
+		showNews() {
+			let seen = null;
+			try { seen = localStorage.getItem('bt2.newsSeen'); } catch (e) {}
+			if (seen && BT2.versionCmp(seen, BT2_VERSION) >= 0) return;
+			if (!seen) {
+				let existing = false; // (settings saved before: this device used an older version; as in the Windows program)
+				try { existing = Module._webConfigFileExists() === 1; } catch (e) {}
+				try { existing = existing || (Module.bt2FS || Module.FS).analyzePath(BT2.USER_ROOT + '/.demo-seen.json').exists; } catch (e) {}
+				if (!existing) { BT2.markNewsSeen(); return; }
+			}
+			const list = BT2.parseNews(BT2_NEWS).filter((e) => BT2.versionCmp(e.v, BT2_VERSION) <= 0 &&
+				(seen ? BT2.versionCmp(e.v, seen) > 0 : BT2.versionCmp(e.v, BT2_VERSION) === 0)).slice(0, 3);
+			const items = [].concat(...list.map((e) => e.items));
+			if (!items.length) { BT2.markNewsSeen(); return; }
+			$('newsTitle').textContent = (list.length === 1 && list[0].v === BT2_VERSION) ? 'Nytt i versjon ' + BT2_VERSION : 'Nytt siden versjon ' + seen;
+			const ul = $('newsList');
+			ul.textContent = '';
+			for (const t of items) { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); }
+			$('newsBox').classList.remove('hidden');
 		},
 	};
 
@@ -2044,6 +2100,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		e.preventDefault();
 	}, { passive: false });
 
+	$('newsOk').addEventListener('click', () => { BT2.markNewsSeen(); $('newsBox').classList.add('hidden'); });
 	$('startButton').addEventListener('click', () => {
 		if (BT2.fullscreenAtStart()) BT2.enterFullscreen(); // (first: the browser allows it only right at a click/key)
 		if (BT2.ctx) {
@@ -2054,6 +2111,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 			});
 		}
 		BT2.started = true;
+		if (!$('newsBox').classList.contains('hidden')) BT2.markNewsSeen(); // (it was shown: not again)
 		BT2.settleUntil = performance.now() + 2500;
 		$('start').classList.add('hidden');
 		BT2.focusCanvas();
@@ -2179,6 +2237,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 	document.addEventListener('visibilitychange', () => {
 		if (document.hidden) {
 			try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {}
+			try { Module._webRescueNow && Module._webRescueNow(); } catch (e) {} // (v0.34: the rescue copy of an unsaved song, see bt2_rescue.c)
 			BT2.syncFiles();
 			BT2.saveDropouts();
 			if (BT2.wake) BT2.wake(); // (a frame wait started while visible would wait for a screen refresh that never comes)
@@ -2188,7 +2247,11 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		if (BT2.started && BT2.ctx && BT2.ctx.state !== 'running') BT2.ctx.resume().catch(() => {});
 		BT2.starfield.kick();
 	});
-	window.addEventListener('pagehide', () => { try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {} BT2.syncFiles(); BT2.saveDropouts(); });
+	window.addEventListener('pagehide', () => {
+		try { Module._webSaveSettingsNow && Module._webSaveSettingsNow(); } catch (e) {}
+		try { Module._webRescueNow && Module._webRescueNow(); } catch (e) {}
+		BT2.syncFiles(); BT2.saveDropouts();
+	});
 
 	// ask the browser to keep our files (not clear them when space is low)
 	try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch (e) {}

@@ -1,0 +1,19 @@
+# «Hva er nytt» – vises på startskjermen én gang etter en oppdatering (nettversjonen og Windows-programmet).
+# Nyeste versjon øverst. «Versjon X.YZ» starter en versjon, «- » er ett punkt. Linjer med # vises ikke.
+# Teksten bygges inn i index.html (web/build_web.sh) og i programmet (src/ft2-clone.rc, BT2NEWS).
+
+Versjon 0.34
+- Redningskopi: Når låta har endringer som ikke er lagret, tar programmet en kopi av den i sin egen mappe (omtrent hvert minutt). Blir appen lukket før du har lagret – iPaden lukket den, strømmen gikk eller programmet krasjet – spør den neste gang om du vil hente låta tilbake. Dine egne filer blir aldri rørt.
+- Denne boksen: etter hver oppdatering ser du her hva som er nytt.
+
+Versjon 0.33
+- Lyden er som før valgene av bufferstørrelse (0.32 hakket).
+
+Versjon 0.31
+- Windows-programmet: velg «Lydsystem: ASIO eller Windows» på startskjermen. ASIO er standard.
+
+Versjon 0.29
+- Ny boks ved logoen og nye linjer på About-skjermen.
+
+Versjon 0.27
+- Hold Ctrl og trykk pil opp/ned for å hoppe 16 rader om gangen (som PgUp/PgDn).

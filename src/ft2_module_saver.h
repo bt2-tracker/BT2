@@ -6,3 +6,4 @@
 
 void saveMusic(UNICHAR *filenameU);
 bool saveXM(UNICHAR *filenameU);
+bool saveXMRescue(UNICHAR *filenameU); // BerntTracker: the rescue copy (see bt2_rescue.c)

@@ -12,6 +12,7 @@
 #endif
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,7 @@
 #include "bt2_winupdate.h"
 #include "bt2_winhome.h"
 #include "bt2_version.h"
+#include "bt2_fs.h"
 
 // colors (web/index.html)
 #define C_TEXT    0xFFDFDFE3 // --text
@@ -73,7 +75,7 @@ static const buttonStyle styleSmallOn = { 15.0f, 400, 18.0f, 10.0f,  8.0f, 1.0f,
 enum
 {
 	HIT_START, HIT_FULLSCREEN, HIT_BUFFER0, HIT_BUFFER1, HIT_BUFFER2, HIT_UPDATE_NOW, HIT_UPDATE_LATER,
-	HIT_DIAG, HIT_FOLDER, HIT_LINK, HIT_DIAG_CLOSE, HIT_SYSTEM0, HIT_SYSTEM1,
+	HIT_DIAG, HIT_FOLDER, HIT_LINK, HIT_DIAG_CLOSE, HIT_SYSTEM0, HIT_SYSTEM1, HIT_NEWS_OK,
 	HIT_COUNT
 };
 
@@ -628,6 +630,195 @@ static float buildAppBox(bt2Canvas *c, float cx, float top)
 	return boxH;
 }
 
+// ------------------------------------------------------------------------------------------------
+// «Hva er nytt» (v0.34): once after an update, what is new since the version this PC saw last. The text is
+// web/nytt.txt, built into the program (BT2NEWS), the same as on the web page. A new user sees nothing.
+
+#define NEWS_MAX_ITEMS 12
+static char newsTitle[80], newsItems[NEWS_MAX_ITEMS][700];
+static int32_t newsCount;
+static bool newsShown;
+
+static int32_t versionCmp(const char *a, const char *b) // "0.34" vs "0.9": 0.34 is newer
+{
+	while (*a != '\0' || *b != '\0')
+	{
+		const long x = strtol(a, (char **)&a, 10), y = strtol(b, (char **)&b, 10);
+		if (x != y)
+			return (x < y) ? -1 : 1;
+		if (*a == '.') a++;
+		if (*b == '.') b++;
+		if ((*a < '0' || *a > '9') && (*b < '0' || *b > '9'))
+			break;
+	}
+	return 0;
+}
+
+static bool newsSeenPath(char *out, size_t outLen)
+{
+	wchar_t local[MAX_PATH];
+	if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, local)))
+		return false;
+
+	char *u8 = bt2Utf8(local);
+	if (u8 == NULL)
+		return false;
+
+	char folder[1024];
+	snprintf(folder, sizeof (folder), "%s\\Bernttracker II", u8);
+	free(u8);
+	if (!bt2FsMkdirs(folder))
+		return false;
+
+	snprintf(out, outLen, "%s\\nytt-sett.txt", folder);
+	return true;
+}
+
+static void markNewsSeen(void)
+{
+	char path[1100];
+	if (newsSeenPath(path, sizeof (path)))
+		bt2FsWriteReplace(path, BT2_VERSION, strlen(BT2_VERSION));
+	newsShown = false;
+}
+
+static void loadNews(void)
+{
+	newsCount = 0;
+	newsShown = false;
+
+	char path[1100], seen[32] = "";
+	if (!newsSeenPath(path, sizeof (path)))
+		return;
+
+	size_t len = 0;
+	char *seenText = (char *)bt2FsReadAll(path, &len, 64);
+	if (seenText != NULL)
+	{
+		snprintf(seen, sizeof (seen), "%s", seenText);
+		seen[strcspn(seen, "\r\n ")] = '\0';
+		free(seenText);
+	}
+
+	if (seen[0] != '\0' && versionCmp(seen, BT2_VERSION) >= 0)
+		return;
+
+	if (seen[0] == '\0') // (settings saved before: this PC used an older version; else a new user)
+	{
+		bool existing = configFileExists();
+		const wchar_t *home = bt2HomeFolder(); // (the demo songs' list: written the first time the program ran)
+		if (!existing && home != NULL)
+		{
+			wchar_t seenList[MAX_PATH + 32];
+			_snwprintf(seenList, MAX_PATH + 31, L"%s\\.demo-seen.json", home);
+			seenList[MAX_PATH + 31] = 0;
+			existing = (GetFileAttributesW(seenList) != INVALID_FILE_ATTRIBUTES);
+		}
+
+		if (!existing)
+		{
+			markNewsSeen();
+			return;
+		}
+	}
+
+	HRSRC res = FindResourceA(NULL, "BT2NEWS", MAKEINTRESOURCEA(10)); // (10 = RT_RCDATA)
+	HGLOBAL mem = (res != NULL) ? LoadResource(NULL, res) : NULL;
+	const DWORD size = (res != NULL) ? SizeofResource(NULL, res) : 0;
+	const char *data = (mem != NULL) ? (const char *)LockResource(mem) : NULL;
+	if (data == NULL || size == 0 || size > 200000)
+		return;
+
+	char *text = (char *)malloc(size + 1);
+	if (text == NULL)
+		return;
+	memcpy(text, data, size);
+	text[size] = '\0';
+
+	int32_t versions = 0;
+	bool include = false, single = true;
+	for (char *line = strtok(text, "\n"); line != NULL; line = strtok(NULL, "\n"))
+	{
+		line[strcspn(line, "\r")] = '\0';
+		while (*line == ' ' || *line == '\t') line++;
+		if (*line == '\0' || *line == '#')
+			continue;
+
+		if (!strncmp(line, "Versjon ", 8))
+		{
+			const char *v = line + 8;
+			include = versionCmp(v, BT2_VERSION) <= 0 && (seen[0] != '\0' ? versionCmp(v, seen) > 0 : versionCmp(v, BT2_VERSION) == 0);
+			if (include)
+			{
+				if (++versions > 3)
+					include = false;
+				else if (versionCmp(v, BT2_VERSION) != 0)
+					single = false;
+			}
+		}
+		else if (include && line[0] == '-' && line[1] == ' ' && newsCount < NEWS_MAX_ITEMS)
+		{
+			snprintf(newsItems[newsCount++], sizeof (newsItems[0]), "%s", line + 2);
+		}
+	}
+	free(text);
+
+	if (newsCount == 0)
+	{
+		markNewsSeen();
+		return;
+	}
+
+	if (single || seen[0] == '\0')
+		snprintf(newsTitle, sizeof (newsTitle), "Nytt i versjon %s", BT2_VERSION);
+	else
+		snprintf(newsTitle, sizeof (newsTitle), "Nytt siden versjon %s", seen);
+	newsShown = true;
+}
+
+// the box (like .appbox.news on the web page: a bold title, the points with a bullet, «OK»)
+static float buildNewsBox(bt2Canvas *c, float cx, float top)
+{
+	const float boxW = fminf(560.0f, vw - 32.0f);
+	const float inner = boxW - 28.0f - 2.0f;
+	const bt2Font f13 = fontCss(13.0f, 400), f13b = fontCss(13.0f, 600);
+	const float l13 = 13.0f * 1.45f;
+	const float indent = 18.0f;
+
+	float h = l13 + 4.0f;
+	for (int32_t i = 0; i < newsCount; i++)
+		h += linesCss(f13, inner - indent, l13, newsItems[i]) + 6.0f;
+
+	float okW, okH;
+	buttonSize(&styleSmall, "OK", &okW, &okH);
+	h += 8.0f + okH;
+
+	const float boxH = h + 20.0f + 2.0f;
+	if (c == NULL)
+		return boxH;
+
+	const float bx = cx - boxW * 0.5f;
+	const float px = snapPx(bx), py = snapPx(top);
+	bt2RoundRect(c, px, py, snapPx(bx + boxW) - px, snapPx(top + boxH) - py, 8.0f * s, 0xFF23272B, borderPx(1.0f), 0xFF3B4045);
+
+	const float tx = bx + 15.0f;
+	float y = top + 11.0f;
+	text(c, f13b, tx, y, inner, l13, BT2_ALIGN_CENTER, C_TEXT, newsTitle);
+	y += l13 + 4.0f;
+
+	for (int32_t i = 0; i < newsCount; i++)
+	{
+		text(c, f13, tx + 4.0f, y, indent, l13, BT2_ALIGN_LEFT, C_DIM, "\xE2\x80\xA2"); // •
+		const float hItem = linesCss(f13, inner - indent, l13, newsItems[i]);
+		text(c, f13, tx + indent, y, inner - indent, l13, BT2_ALIGN_LEFT, C_DIM, newsItems[i]);
+		y += hItem + 6.0f;
+	}
+
+	y += 8.0f;
+	drawButton(c, &styleSmall, "OK", cx - okW * 0.5f, y, okW, okH, HIT_NEWS_OK);
+	return boxH;
+}
+
 static float buildStart(bt2Canvas *c, float top)
 {
 	const float gap = compact ? 10.0f : 14.0f;
@@ -762,6 +953,10 @@ static float buildStart(bt2Canvas *c, float top)
 	snprintf(version, sizeof (version), "Versjon %s · %s", BT2_VERSION, BT2_DATE);
 	text(c, f13, 16.0f, y, textW, l13, BT2_ALIGN_CENTER, C_DIM, version);
 	y += l13 + gap;
+
+	// «Hva er nytt» (v0.34, once after an update)
+	if (newsShown)
+		y += buildNewsBox(c, cx, y) + gap;
 
 	// updates
 	y += buildAppBox(c, cx, y) + gap;
@@ -1091,6 +1286,7 @@ bool bt2StartScreen(void)
 	startFocused = true;
 	toastUntil = 0;
 	buildAudioLine();
+	loadNews();
 
 	bt2HomeStartDemoCopy();
 	bt2UpdateStartCheck();
@@ -1180,6 +1376,12 @@ bool bt2StartScreen(void)
 					switch (h)
 					{
 						case HIT_START: startNow = true; break;
+
+						case HIT_NEWS_OK:
+							markNewsSeen();
+							needLayout = true;
+							needRender = true;
+							break;
 
 						case HIT_FULLSCREEN:
 							optFullscreen = !optFullscreen;
@@ -1292,7 +1494,11 @@ bool bt2StartScreen(void)
 			break;
 
 		if (startNow && upd.state != BT2_UPD_RESTARTING)
+		{
+			if (newsShown)
+				markNewsSeen(); // (it was shown: not again)
 			break;
+		}
 
 		// news from the update check
 		bt2UpdateGetInfo(&upd);

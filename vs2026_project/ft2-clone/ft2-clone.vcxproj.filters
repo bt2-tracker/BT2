@@ -55,6 +55,7 @@
     <ClCompile Include="..\..\src\bt2_find.c" />
     <ClCompile Include="..\..\src\bt2_winoverlay.c" />
     <ClCompile Include="..\..\src\bt2_windiskop.c" />
+    <ClCompile Include="..\..\src\bt2_rescue.c" />
     <ClCompile Include="..\..\src\rtmidi\RtMidi.cpp">
       <Filter>rtmidi</Filter>
     </ClCompile>
@@ -330,6 +331,9 @@
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\bt2_windiskop.h">
+      <Filter>headers</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\src\bt2_rescue.h">
       <Filter>headers</Filter>
     </ClInclude>
     <ClInclude Include="..\..\src\mixer\ft2_mix.h">
