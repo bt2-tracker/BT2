@@ -895,7 +895,9 @@ void setConfigAudioRadioButtonStates(void) // accessed by other .c files
 	showRadioButtonGroup(RB_GROUP_CONFIG_SOUND_BUFF_SIZE);
 	showRadioButtonGroup(RB_GROUP_CONFIG_AUDIO_BIT_DEPTH);
 	showRadioButtonGroup(RB_GROUP_CONFIG_AUDIO_INTERPOLATION);
+#ifndef __EMSCRIPTEN__ // (BerntTracker, v0.35: on the web the browser chooses the rate, see showConfigScreen())
 	showRadioButtonGroup(RB_GROUP_CONFIG_AUDIO_FREQ);
+#endif
 	showRadioButtonGroup(RB_GROUP_CONFIG_AUDIO_INPUT_FREQ);
 	showRadioButtonGroup(RB_GROUP_CONFIG_FREQ_SLIDES);
 }
@@ -963,7 +965,9 @@ static void setConfigLayoutCheckButtonStates(void)
 	showCheckBox(CB_CONF_CHANNUMS);
 	showCheckBox(CB_CONF_SHOW_VOLCOL);
 	showCheckBox(CB_CONF_ENABLE_CUSTOM_POINTER);
+#ifndef __EMSCRIPTEN__ // (BerntTracker, v0.35: the web version always uses the device's own pointer)
 	showCheckBox(CB_CONF_SOFTWARE_MOUSE);
+#endif
 }
 
 static void setConfigLayoutRadioButtonStates(void)
@@ -1144,7 +1148,9 @@ static void setConfigMiscRadioButtonStates(void)
 	// show result
 
 	showRadioButtonGroup(RB_GROUP_CONFIG_FILESORT);
+#ifndef __EMSCRIPTEN__ // (BerntTracker, v0.35: the web version always fills the page)
 	showRadioButtonGroup(RB_GROUP_CONFIG_WIN_SIZE);
+#endif
 }
 
 void showConfigScreen(void)
@@ -1195,6 +1201,12 @@ void showConfigScreen(void)
 			drawFramework(112,  16, AUDIO_SELECTORS_BOX_WIDTH+4, 69, FRAMEWORK_TYPE2);
 			drawFramework(112, 103, AUDIO_SELECTORS_BOX_WIDTH+4, 47, FRAMEWORK_TYPE2);
 
+#ifdef __EMSCRIPTEN__
+			// BerntTracker (v0.35): on the web the browser plays the sound on the device's own output (no list)
+			textOut(116, 20, PAL_FORGRND, "The browser plays the sound on this");
+			textOut(116, 31, PAL_FORGRND, "device's own sound output.");
+			drawAudioInputList();
+#else
 			drawAudioOutputList();
 			drawAudioInputList();
 
@@ -1203,6 +1215,7 @@ void showConfigScreen(void)
 
 			showPushButton(PB_CONFIG_AUDIO_OUTPUT_DOWN);
 			showPushButton(PB_CONFIG_AUDIO_OUTPUT_UP);
+#endif
 			showPushButton(PB_CONFIG_AUDIO_INPUT_DOWN);
 			showPushButton(PB_CONFIG_AUDIO_INPUT_UP);
 			showPushButton(PB_CONFIG_AMP_DOWN);
@@ -1238,9 +1251,20 @@ void showConfigScreen(void)
 			textOutShadow(406, 160, PAL_FORGRND, PAL_DSKTOP2, "More precise BPM");
 
 			textOutShadow(523,   3, PAL_FORGRND, PAL_DSKTOP2, "Audio output rate:");
+#ifdef __EMSCRIPTEN__
+			{
+				// BerntTracker (v0.35): the browser chooses the rate
+				char rateText[32];
+				sprintf(rateText, "%dHz", (int32_t)audio.haveFreq);
+				textOutShadow(523,  17, PAL_FORGRND, PAL_DSKTOP2, "Chosen by the");
+				textOutShadow(523,  31, PAL_FORGRND, PAL_DSKTOP2, "browser:");
+				textOutShadow(538,  45, PAL_FORGRND, PAL_DSKTOP2, rateText);
+			}
+#else
 			textOutShadow(538,  17, PAL_FORGRND, PAL_DSKTOP2, "44100Hz");
 			textOutShadow(538,  31, PAL_FORGRND, PAL_DSKTOP2, "48000Hz");
 			textOutShadow(538,  45, PAL_FORGRND, PAL_DSKTOP2, "96000Hz");
+#endif
 
 			textOutShadow(523,  61, PAL_FORGRND, PAL_DSKTOP2, "Frequency slides:");
 			textOutShadow(538,  75, PAL_FORGRND, PAL_DSKTOP2, "Amiga");
@@ -1261,7 +1285,9 @@ void showConfigScreen(void)
 			setScrollBarPos(SB_MASTERVOL_SCROLL, config.masterVol,      DONT_TRIGGER_CALLBACK);
 
 			showScrollBar(SB_AUDIO_INPUT_SCROLL);
+#ifndef __EMSCRIPTEN__
 			showScrollBar(SB_AUDIO_OUTPUT_SCROLL);
+#endif
 			showScrollBar(SB_AMP_SCROLL);
 			showScrollBar(SB_MASTERVOL_SCROLL);
 		}
@@ -1314,7 +1340,9 @@ void showConfigScreen(void)
 			textOutShadow(319, 146, PAL_FORGRND, PAL_DSKTOP2, "FT2");
 			textOutShadow(360, 146, PAL_FORGRND, PAL_DSKTOP2, "Lined");
 
+#ifndef __EMSCRIPTEN__ // (BerntTracker, v0.35: not on the web, see setConfigLayoutCheckButtonStates())
 			textOutShadow(272, 160, PAL_FORGRND, PAL_DSKTOP2, "Software mouse");
+#endif
 
 			textOutShadow(414,   3, PAL_FORGRND, PAL_DSKTOP2, "Pattern text");
 			textOutShadow(414,  17, PAL_FORGRND, PAL_DSKTOP2, "Block mark");
@@ -1381,11 +1409,16 @@ void showConfigScreen(void)
 			textOutShadow(413,  77, PAL_FORGRND, PAL_DSKTOP2, "Tracks");
 
 			textOutShadow(114,  46, PAL_FORGRND, PAL_DSKTOP2, "Window size:");
+#ifdef __EMSCRIPTEN__
+			textOutShadow(114,  59, PAL_FORGRND, PAL_DSKTOP2, "Fills the page"); // (BerntTracker, v0.35)
+			textOutShadow(114,  73, PAL_FORGRND, PAL_DSKTOP2, "(the browser)");
+#else
 			textOutShadow(130,  59, PAL_FORGRND, PAL_DSKTOP2, "Auto fit");
 			textOutShadow(130,  73, PAL_FORGRND, PAL_DSKTOP2, "1x");
 			textOutShadow(172,  73, PAL_FORGRND, PAL_DSKTOP2, "3x");
 			textOutShadow(130,  87, PAL_FORGRND, PAL_DSKTOP2, "2x");
 			textOutShadow(172,  87, PAL_FORGRND, PAL_DSKTOP2, "4x");
+#endif
 			textOutShadow(114, 103, PAL_FORGRND, PAL_DSKTOP2, "Video settings:");
 			textOutShadow(130, 117, PAL_FORGRND, PAL_DSKTOP2, "VSync off");
 			textOutShadow(130, 130, PAL_FORGRND, PAL_DSKTOP2, "Fullscreen");
@@ -1459,6 +1492,9 @@ void showConfigScreen(void)
 
 			showPushButton(PB_CONFIG_MIDI_INPUT_DOWN);
 			showPushButton(PB_CONFIG_MIDI_INPUT_UP);
+#ifdef __EMSCRIPTEN__
+			webMidiRequest(); // BerntTracker (v0.35): the browser asks if the page may use MIDI (see bt2_webmidi.c)
+#endif
 			rescanMidiInputDevices();
 			drawMidiInputList();
 			showScrollBar(SB_MIDI_INPUT_SCROLL);
@@ -1634,6 +1670,40 @@ void rbConfigMidiInput(void)
 
 	hideConfigScreen();
 	showConfigScreen();
+}
+#endif
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+/* BerntTracker (Windows, v0.35): like the web version, a changed setting is saved within a second (not only when
+** the program is closed normally), so nothing is lost if the PC freezes or the power goes. Only when "Auto save"
+** is on in Config (as standard; FT2's rule), and not while a text is being typed or a dialog box is shown.
+*/
+void bt2SaveSettingsIfChanged(void)
+{
+	static config_t lastSaved;
+	static bool haveLast;
+	static uint32_t lastCheck;
+
+	const uint32_t now = SDL_GetTicks();
+	if (now - lastCheck < 1000)
+		return;
+	lastCheck = now;
+
+	if (!haveLast)
+	{
+		memcpy(&lastSaved, &config, sizeof (config_t)); // (what was loaded at the start)
+		haveLast = true;
+		return;
+	}
+
+	if (!config.cfg_AutoSave || editor.editTextFlag || ui.sysReqShown)
+		return;
+
+	if (memcmp(&lastSaved, &config, sizeof (config_t)) != 0)
+	{
+		saveConfig(CONFIG_HIDE_ERRORS);
+		memcpy(&lastSaved, &config, sizeof (config_t));
+	}
 }
 #endif
 

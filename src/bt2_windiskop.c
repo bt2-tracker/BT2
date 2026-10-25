@@ -32,6 +32,7 @@
 #include "bt2_import.h"
 #include "bt2_fs.h"
 #include "bt2_net.h"
+#include "ft2_module_loader.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "comdlg32.lib")
@@ -529,7 +530,7 @@ void pbDiskOpImport(void)
 	memset(&ofn, 0, sizeof (ofn));
 	ofn.lStructSize = sizeof (ofn);
 	ofn.hwndOwner = video.hWnd;
-	ofn.lpstrFilter = L"Alle filer (*.*)\0*.*\0Sanger, instrumenter og samples\0*.xm;*.mod;*.s3m;*.it;*.stm;*.xi;*.wav;*.aif;*.aiff;*.iff;*.flac;*.raw;*.zip\0\0";
+	ofn.lpstrFilter = L"Alle filer (*.*)\0*.*\0Sanger, instrumenter og samples\0*.xm;*.mod;*.s3m;*.it;*.stm;*.xi;*.pat;*.wav;*.aif;*.aiff;*.iff;*.flac;*.mp3;*.ogg;*.brr;*.raw;*.xp;*.xt;*.zip\0\0";
 	ofn.lpstrFile = names;
 	ofn.nMaxFile = (DWORD)(sizeof (names) / sizeof (names[0]));
 	ofn.lpstrTitle = L"Imp.: hent filer inn i BT2";
@@ -627,6 +628,300 @@ void pbDiskOpImport(void)
 
 	importJobFree(j);
 	editor.diskOpReadDir = true; // (shows the new files)
+}
+
+// ------------------------------------------------------------------------------------------------
+// files dragged onto the window (v0.35, like the web version; see bt2_windiskop.h)
+
+typedef struct dropItem_t
+{
+	char *path; // the file on the disk
+	char *rel;  // NULL: a file dropped by itself; else its place in a dropped folder ("Folder/sub/a.xm")
+} dropItem;
+
+typedef struct dropJob_t
+{
+	volatile int32_t cancel;
+	dropItem *items;
+	int32_t count, cap;
+	char *dir;
+	bool here;
+	uint64_t start;
+	char first[2048]; // the first file written (not from a zip)
+} dropJob;
+
+static bool collecting;
+static char **dropped;
+static int32_t droppedCount, droppedCap;
+
+static void addItem(dropJob *j, const char *path, const char *rel)
+{
+	if (j->count >= 100000)
+		return;
+
+	if (j->count >= j->cap)
+	{
+		const int32_t newCap = (j->cap > 0) ? j->cap * 2 : 64;
+		dropItem *bigger = (dropItem *)realloc(j->items, (size_t)newCap * sizeof (dropItem));
+		if (bigger == NULL)
+			return;
+		j->items = bigger;
+		j->cap = newCap;
+	}
+
+	dropItem *it = &j->items[j->count];
+	it->path = _strdup(path);
+	it->rel = (rel != NULL) ? _strdup(rel) : NULL;
+	if (it->path != NULL && (rel == NULL || it->rel != NULL))
+		j->count++;
+	else
+	{
+		free(it->path);
+		free(it->rel);
+	}
+}
+
+static void addFolder(dropJob *j, const char *path, const char *rel, int32_t depth)
+{
+	if (depth > 32)
+		return;
+
+	bt2DirIter *d = bt2FsDirOpen(path);
+	if (d == NULL)
+		return;
+
+	const char *name;
+	bool isDir;
+	int64_t size;
+	while (bt2FsDirNext(d, &name, &isDir, &size))
+	{
+		char childPath[2048], childRel[2048];
+		bt2PathJoin(childPath, sizeof (childPath), path, name);
+		snprintf(childRel, sizeof (childRel), "%s/%s", rel, name);
+		if (isDir)
+			addFolder(j, childPath, childRel, depth + 1);
+		else
+			addItem(j, childPath, childRel);
+	}
+
+	bt2FsDirClose(d);
+}
+
+static void dropProgress(void *ud, double done)
+{
+	dropJob *j = (dropJob *)ud;
+	if (GetTickCount64() - j->start < 400)
+		return; // (a quick import shows no box)
+
+	char text[128];
+	snprintf(text, sizeof (text), "Importerer \xE2\x80\xA6 %d %%", (int)(done * 100.0 + 0.5));
+	bt2NetBoxShow(text, done);
+}
+
+static int32_t dropJobRun(void *arg)
+{
+	dropJob *j = (dropJob *)arg;
+	bt2Import *im = bt2ImportBegin(j->dir, homeU8, j->here, toastFunc, dropProgress, j, &j->cancel, j->count);
+	if (im == NULL)
+		return 0;
+
+	for (int32_t i = 0; i < j->count && !j->cancel; i++)
+	{
+		size_t len = 0;
+		uint8_t *data = bt2FsReadAll(j->items[i].path, &len, 1024u * 1024 * 1024);
+		if (j->items[i].rel != NULL)
+			bt2ImportCopy(im, j->items[i].rel, data, len);
+		else
+			bt2ImportData(im, j->items[i].path, data, len);
+		free(data);
+	}
+
+	snprintf(j->first, sizeof (j->first), "%s", bt2ImportFirstFile(im));
+	return bt2ImportEnd(im);
+}
+
+static void dropJobFree(dropJob *j)
+{
+	for (int32_t i = 0; i < j->count; i++)
+	{
+		free(j->items[i].path);
+		free(j->items[i].rel);
+	}
+	free(j->items);
+	free(j->dir);
+	free(j);
+}
+
+static void clearDropped(void)
+{
+	for (int32_t i = 0; i < droppedCount; i++)
+		free(dropped[i]);
+	free(dropped);
+	dropped = NULL;
+	droppedCount = droppedCap = 0;
+}
+
+void bt2DropBegin(void)
+{
+	clearDropped();
+	collecting = true;
+}
+
+bool bt2DropCollect(const char *pathUtf8)
+{
+	if (!collecting || pathUtf8 == NULL)
+		return false;
+
+	if (droppedCount >= droppedCap)
+	{
+		const int32_t newCap = (droppedCap > 0) ? droppedCap * 2 : 16;
+		char **bigger = (char **)realloc(dropped, (size_t)newCap * sizeof (char *));
+		if (bigger == NULL)
+			return true;
+		dropped = bigger;
+		droppedCap = newCap;
+	}
+
+	dropped[droppedCount] = _strdup(pathUtf8);
+	if (dropped[droppedCount] != NULL)
+		droppedCount++;
+	return true;
+}
+
+static void openDropped(char *pathUtf8)
+{
+	if (bt2PrepareDroppedFile(pathUtf8)) // (a Modland song: downloaded first)
+		loadDroppedFile(pathUtf8); // (FT2's own: asks first if the song has unsaved changes)
+}
+
+void bt2DropComplete(void)
+{
+	collecting = false;
+	if (droppedCount == 0 || !ready)
+	{
+		clearDropped();
+		return;
+	}
+
+	// files that are already in your BT2 folder are not copied again: one such file is just opened
+	int32_t outside = 0;
+	for (int32_t i = 0; i < droppedCount; i++)
+	{
+		if (!bt2PathInside(dropped[i], homeU8))
+			outside++;
+	}
+
+	if (outside == 0)
+	{
+		if (droppedCount == 1 && !bt2FsIsDir(dropped[0]))
+			openDropped(dropped[0]);
+		else
+			bt2Toast("Filene ligger allerede i BT2-mappa");
+		clearDropped();
+		return;
+	}
+
+	dropJob *j = (dropJob *)calloc(1, sizeof (dropJob));
+	if (j == NULL)
+	{
+		clearDropped();
+		return;
+	}
+
+	bool singleFile = false;
+	for (int32_t i = 0; i < droppedCount; i++)
+	{
+		if (bt2PathInside(dropped[i], homeU8))
+			continue;
+
+		if (bt2FsIsDir(dropped[i]))
+		{
+			const char *name = strrchr(dropped[i], '\\');
+			const char *slash = strrchr(dropped[i], '/');
+			if (slash != NULL && (name == NULL || slash > name))
+				name = slash;
+			name = (name != NULL) ? name + 1 : dropped[i];
+			if (name[0] == '\0')
+				name = "Mappe";
+			addFolder(j, dropped[i], name, 0);
+		}
+		else
+		{
+			addItem(j, dropped[i], NULL);
+			singleFile = (outside == 1);
+		}
+	}
+
+	const char *ext = (droppedCount == 1) ? strrchr(dropped[0], '.') : NULL;
+	const bool isZip = (ext != NULL && _stricmp(ext, ".zip") == 0);
+	clearDropped();
+
+	if (j->count == 0)
+	{
+		dropJobFree(j);
+		bt2Toast("Fant ingen filer \xC3\xA5 hente inn");
+		return;
+	}
+
+	// into the folder you are in, if it is one of your own (else the BT2 folder), as Imp.
+	char *cwd = cwdUtf8();
+	j->here = (cwd != NULL) && bt2PathInside(cwd, homeU8) && !bt2ModlandIsMirrorPath(cwd);
+	if (j->here)
+	{
+		j->dir = cwd;
+	}
+	else
+	{
+		free(cwd);
+		j->dir = _strdup(homeU8);
+	}
+
+	if (j->dir == NULL)
+	{
+		dropJobFree(j);
+		return;
+	}
+
+	j->start = GetTickCount64();
+	int32_t imported = 0;
+	const bool ran = bt2RunJob(dropJobRun, j, &j->cancel, &imported);
+	bt2NetBoxHide();
+	if (!ran)
+		return; // (the program is being closed; the job keeps j)
+
+	editor.diskOpReadDir = true; // (shows the new files)
+
+	// one song/instrument/sample dropped: open it too (like FT2 does) - the copy that was written
+	if (singleFile && !isZip && imported == 1 && j->first[0] != '\0')
+		openDropped(j->first);
+
+	dropJobFree(j);
+}
+
+void bt2DropTestFromEnv(void)
+{
+	char list[8192];
+	envUtf8(L"BT2_TEST_DROP", list, sizeof (list));
+	if (list[0] == '\0')
+		return;
+
+	SDL_Event ev;
+	memset(&ev, 0, sizeof (ev));
+	ev.type = SDL_DROPBEGIN;
+	SDL_PushEvent(&ev);
+
+	for (char *p = strtok(list, "|"); p != NULL; p = strtok(NULL, "|"))
+	{
+		memset(&ev, 0, sizeof (ev));
+		ev.type = SDL_DROPFILE;
+		ev.drop.file = SDL_strdup(p);
+		if (ev.drop.file != NULL && SDL_PushEvent(&ev) <= 0)
+			SDL_free(ev.drop.file);
+	}
+
+	memset(&ev, 0, sizeof (ev));
+	ev.type = SDL_DROPCOMPLETE;
+	SDL_PushEvent(&ev);
 }
 
 void pbDiskOpExport(void)

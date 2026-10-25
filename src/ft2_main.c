@@ -249,7 +249,9 @@ int main(int argc, char *argv[])
 	}
 #endif
 
-#ifdef HAS_MIDI
+#if defined HAS_MIDI && defined __EMSCRIPTEN__
+	initMidiFunc(NULL); // BerntTracker (v0.35): Web MIDI, the page finds the inputs (bt2_webmidi.c)
+#elif defined HAS_MIDI
 	// MIDI init can take several seconds, use thread
 	midi.initMidiThread = SDL_CreateThread(initMidiFunc, "MIDI init thread", NULL);
 	if (midi.initMidiThread == NULL)
@@ -271,6 +273,9 @@ int main(int argc, char *argv[])
 
 	hpc_ResetCounters(&video.vblankHpc); // quirk: this is needed for potential okBox() calls in handleModuleLoadFromArg()
 	handleModuleLoadFromArg(argc, argv);
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	bt2DropTestFromEnv(); // (only for the automatic tests)
+#endif
 
 	editor.mainLoopOngoing = true;
 	hpc_ResetCounters(&video.vblankHpc); // this must be the last thing we do before entering the main loop
@@ -287,6 +292,10 @@ int main(int argc, char *argv[])
 		handleEvents();
 #if defined _WIN32 || defined __EMSCRIPTEN__
 		bt2RescueTick(); // BerntTracker: the rescue copy of an unsaved song (bt2_rescue.c)
+#endif
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+		bt2SaveSettingsIfChanged(); // BerntTracker (v0.35): settings are saved right away, like the web version
+		bt2SaveDropouts(); // BerntTracker (v0.35): breaks in the sound, for the next sound test
 #endif
 		handleRedrawing();
 		flipFrame();

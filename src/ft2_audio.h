@@ -139,6 +139,9 @@ bool setupAudio(bool showErrorMsg);
 void closeAudio(void);
 void pauseAudio(void);
 void resumeAudio(void);
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+int32_t audioDropouts(void); // BerntTracker (v0.35): breaks in the sound since the start (see ft2_audio.c)
+#endif
 bool setNewAudioSettings(void);
 void resetAudioDither(void);
 void lockAudio(void);

@@ -225,7 +225,7 @@ img.logo3d { display: block; width: min(92vw, 760px); height: auto; margin: 0 0 
 	const $ = (id) => document.getElementById(id);
 
 	// this version (BT2_BUILD is filled in by web/build_web.sh, which also reads the two lines below)
-	const BT2_VERSION = '0.34';
+	const BT2_VERSION = '0.35';
 	const BT2_DATE = '24.10.2026';
 	const BT2_NEWS = /*BT2_NEWS*/""; // (v0.34: web/nytt.txt, put in by web/build_web.sh)
 	const BT2_BUILD = '__BT2_BUILD__';
@@ -2100,6 +2100,50 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		e.preventDefault();
 	}, { passive: false });
 
+	// ---------- MIDI (v0.35): Web MIDI for FT2's MIDI input (see src/bt2_webmidi.c). Chrome, Edge and Firefox have it;
+	// Safari (and so every browser on iPad) doesn't yet. The browser asks the user first, so the page only asks
+	// when it was allowed before, or when Config > MIDI input is opened.
+	BT2.midi = {
+		access: null, inputs: [], openIndex: -1, pending: false,
+		supported: () => typeof navigator.requestMIDIAccess === 'function',
+		state: () => !BT2.midi.supported() ? 0 : (BT2.midi.access ? 2 : 1),
+		count: () => BT2.midi.inputs.length,
+		name: (i) => { const p = BT2.midi.inputs[i]; return p ? String(p.name || ('MIDI ' + (i + 1))) : ''; },
+		open: (i) => { BT2.midi.openIndex = i; BT2.midi.attach(); },
+		attach: () => BT2.midi.inputs.forEach((p, i) => { p.onmidimessage = (i === BT2.midi.openIndex) ? BT2.midi.onMessage : null; }),
+		onMessage: (e) => {
+			const d = e.data;
+			if (!d || d.length < 2 || d[0] >= 0xF0) return; // (notes, controllers and pitch bend; no system messages)
+			try { Module._webMidiMessage(d[0], d[1], d.length > 2 ? d[2] : 0, Math.min(d.length, 3)); } catch (err) {}
+			if (BT2.wake) BT2.wake();
+		},
+		refresh: () => {
+			const m = BT2.midi;
+			if (!m.access) return;
+			m.inputs = Array.from(m.access.inputs.values()).filter((p) => p.state !== 'disconnected');
+			m.attach();
+			try { Module._webMidiPortsChanged(); } catch (e) {}
+		},
+		request: async () => {
+			const m = BT2.midi;
+			if (!m.supported() || m.access || m.pending) return;
+			m.pending = true;
+			try {
+				m.access = await navigator.requestMIDIAccess({ sysex: false });
+				m.access.onstatechange = () => m.refresh();
+				m.refresh();
+			} catch (e) { console.warn('MIDI', e); }
+			m.pending = false;
+		},
+		init: async () => {
+			if (!BT2.midi.supported()) return;
+			try {
+				const p = await navigator.permissions.query({ name: 'midi' });
+				if (p.state === 'granted') BT2.midi.request();
+			} catch (e) {}
+		},
+	};
+
 	$('newsOk').addEventListener('click', () => { BT2.markNewsSeen(); $('newsBox').classList.add('hidden'); });
 	$('startButton').addEventListener('click', () => {
 		if (BT2.fullscreenAtStart()) BT2.enterFullscreen(); // (first: the browser allows it only right at a click/key)
@@ -2126,6 +2170,7 @@ registerProcessor('bt2-queue', BT2Queue);`;
 		const L = [];
 		L.push('Motor:          ' + (BT2.ENGINE_NAMES[BT2.audioMode] || '-'));
 		L.push('Plattform:      ' + BT2.platformName());
+		L.push('Versjon:        ' + BT2_VERSION + ' · ' + BT2_DATE); // (v0.35: as in the Windows program's sound test)
 		L.push('Isolert side:   ' + (window.crossOriginIsolated ? 'ja' : 'nei'));
 		if (c) {
 			L.push('Status:         ' + c.state);

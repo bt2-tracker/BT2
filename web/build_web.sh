@@ -10,7 +10,7 @@ mkdir -p "$OUT"
 
 SRC="src/*.c src/gfxdata/*.c src/mixer/*.c src/scopes/*.c src/modloaders/*.c src/smploaders/*.c"
 
-COMMON="-O3 -DNDEBUG -Wno-unused-command-line-argument \
+COMMON="-O3 -DNDEBUG -DHAS_MIDI -Wno-unused-command-line-argument \
  -sASYNCIFY -sASYNCIFY_STACK_SIZE=131072 \
  -sSTACK_SIZE=2097152 -sINITIAL_MEMORY=67108864 -sALLOW_MEMORY_GROWTH -sMAXIMUM_MEMORY=1073741824 \
  -sFORCE_FILESYSTEM -lidbfs.js \

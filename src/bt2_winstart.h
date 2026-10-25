@@ -15,4 +15,6 @@
 // closed, or the program was updated and starts again by itself).
 bool bt2StartScreen(void);
 
+void bt2SaveDropouts(void); // v0.35: from the main loop, breaks in the sound are kept for the next sound test
+
 #endif

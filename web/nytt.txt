@@ -2,6 +2,13 @@
 # Nyeste versjon øverst. «Versjon X.YZ» starter en versjon, «- » er ett punkt. Linjer med # vises ikke.
 # Teksten bygges inn i index.html (web/build_web.sh) og i programmet (src/ft2-clone.rc, BT2NEWS).
 
+Versjon 0.35
+- MIDI-keyboard virker nå også i nettversjonen i Chrome, Edge og Firefox (på PC/Mac). Åpne Config > MIDI input, så spør nettleseren om lov. Safari på iPad har ikke MIDI for nettsider ennå.
+- Windows-programmet: dra filer og mapper inn i vinduet, så kopieres de inn i BT2-mappa (zip pakkes ut), som på iPad. Én låt åpnes med en gang.
+- Windows-programmet lagrer innstillingene med en gang du endrer dem, og viser en norsk melding hvis det skulle krasje (med mulighet til å starte på nytt).
+- Lydtesten viser avbrudd i lyden (nå og forrige gang) og har tastaturtest, både på nett og i Windows-programmet.
+- På nett er innstillinger som ikke virker der skjult (lydenhet, utgangsrate, vindusstørrelse, «Software mouse»).
+
 Versjon 0.34
 - Redningskopi: Når låta har endringer som ikke er lagret, tar programmet en kopi av den i sin egen mappe (omtrent hvert minutt). Blir appen lukket før du har lagret – iPaden lukket den, strømmen gikk eller programmet krasjet – spør den neste gang om du vil hente låta tilbake. Dine egne filer blir aldri rørt.
 - Denne boksen: etter hver oppdatering ser du her hva som er nytt.

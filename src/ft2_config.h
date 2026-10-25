@@ -170,6 +170,9 @@ config_t;
 
 void resetConfig(void);
 bool configFileExists(void); // BerntTracker (v0.34): FT2.CFG has been saved before (not a new user)
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+void bt2SaveSettingsIfChanged(void); // BerntTracker (v0.35): from the main loop, settings are saved right away (if "Auto save")
+#endif
 bool loadConfig(bool showErrorFlag);
 void loadConfig2(void); // called by "Load config" button
 bool saveConfig(bool showErrorFlag);

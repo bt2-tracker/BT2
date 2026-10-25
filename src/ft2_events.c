@@ -19,6 +19,9 @@
 #include "ft2_diskop.h"
 #include "ft2_module_loader.h"
 #include "ft2_module_saver.h"
+#if defined _WIN32 || defined __EMSCRIPTEN__
+#include "bt2_rescue.h" // BerntTracker: the rescue copy (also when the program crashes)
+#endif
 #include "ft2_sample_loader.h"
 #include "ft2_mouse.h"
 #include "ft2_midi.h"
@@ -32,6 +35,9 @@
 #include "ft2_sample_ed.h"
 #include "ft2_sample_ed_features.h"
 #include "ft2_structs.h"
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+#include "bt2_windiskop.h" // BerntTracker (v0.35): files dragged from Windows
+#endif
 #include "ft2_touchkeys.h" // BerntTracker: on-screen keyboard
 #include "ft2_audio.h"
 #include "ft2_wasapi.h" // BerntTracker (Windows): exclusive mode
@@ -288,6 +294,69 @@ static LONG WINAPI exceptionHandler(EXCEPTION_POINTERS *ptr)
 	if (oneInstHandle != NULL)
 		CloseHandle(oneInstHandle);
 
+#ifndef __EMSCRIPTEN__
+	/* BerntTracker (v0.35): like the web version - a message in Norwegian, the song goes to the rescue copy
+	** (the next start asks to get it back, see bt2_rescue.c), and the program can be started again.
+	** Only if the rescue copy can't be written: FT2's own backup (backupNNN.xm in the songs folder).
+	*/
+	if (!backupMadeAfterCrash)
+	{
+		backupMadeAfterCrash = true; // (only once, even if the crash happens again in here)
+
+		bool rescued = bt2RescueOnCrash();
+		if (!rescued && getDiskOpModPath() != NULL && UNICHAR_CHDIR(getDiskOpModPath()) == 0)
+		{
+			int32_t i;
+			for (i = 1; i < BACKUP_FILES_TO_TRY; i++)
+			{
+				sprintf(fileName, "backup%03d.xm", (int32_t)i);
+				if (stat(fileName, &statBuffer) != 0)
+					break;
+			}
+
+			if (i != BACKUP_FILES_TO_TRY)
+			{
+				UNICHAR *fileNameU = cp850ToUnichar(fileName);
+				if (fileNameU != NULL)
+				{
+					saveXM(fileNameU);
+					free(fileNameU);
+				}
+			}
+		}
+
+		const wchar_t *text = rescued ?
+			L"Bernttracker II fikk en feil og m\u00E5 lukkes.\n\n"
+			L"Det du har lagret (Save) er trygt. Hadde l\u00E5ta endringer som ikke var lagret, sp\u00F8r programmet "
+			L"neste gang om du vil hente den tilbake (redningskopi).\n\n"
+			L"Vil du starte Bernttracker II p\u00E5 nytt n\u00E5?" :
+			L"Bernttracker II fikk en feil og m\u00E5 lukkes.\n\n"
+			L"Det du har lagret (Save) er trygt. En kopi av l\u00E5ta er fors\u00F8kt lagret som \u00ABbackup001.xm\u00BB "
+			L"(eller neste ledige nummer) i mappa med l\u00E5tene dine.\n\n"
+			L"Vil du starte Bernttracker II p\u00E5 nytt n\u00E5?";
+
+		if (MessageBoxW(NULL, text, L"Noe gikk galt", MB_YESNO | MB_ICONERROR | MB_TOPMOST) == IDYES)
+		{
+			wchar_t exe[MAX_PATH];
+			if (GetModuleFileNameW(NULL, exe, MAX_PATH) > 0)
+			{
+				STARTUPINFOW si;
+				PROCESS_INFORMATION pi;
+				memset(&si, 0, sizeof (si));
+				si.cb = sizeof (si);
+				memset(&pi, 0, sizeof (pi));
+				if (CreateProcessW(exe, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+				{
+					CloseHandle(pi.hThread);
+					CloseHandle(pi.hProcess);
+				}
+			}
+		}
+	}
+
+	return EXCEPTION_EXECUTE_HANDLER; // (the program ends here, without Windows' own "stopped working" box on top)
+#endif
+
 	if (!backupMadeAfterCrash)
 	{
 		if (getDiskOpModPath() != NULL && UNICHAR_CHDIR(getDiskOpModPath()) == 0)
@@ -480,6 +549,29 @@ static void handleSDLEvents(void)
 			else if (event.wheel.y < 0)
 				mouseWheelHandler(MOUSE_WHEEL_DOWN);
 		}
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+		else if (event.type == SDL_DROPBEGIN) // BerntTracker (v0.35): files dragged from Windows (bt2_windiskop.c)
+		{
+			bt2DropBegin();
+		}
+		else if (event.type == SDL_DROPCOMPLETE)
+		{
+			if (!video.fullscreen)
+			{
+				if (SDL_GetWindowFlags(video.window) & SDL_WINDOW_MINIMIZED)
+					SDL_RestoreWindow(video.window);
+
+				SDL_RaiseWindow(video.window);
+			}
+
+			editor.autoPlayOnDrop = false;
+			bt2DropComplete();
+		}
+		else if (event.type == SDL_DROPFILE && bt2DropCollect(event.drop.file))
+		{
+			SDL_free(event.drop.file);
+		}
+#endif
 		else if (event.type == SDL_DROPFILE)
 		{
 			editor.autoPlayOnDrop = false;

@@ -282,6 +282,96 @@ static void windowsVersion(char *out, size_t outLen)
 }
 
 // the sound test's text (like the web version's «Lydtest»)
+// ------------------------------------------------------------------------------------------------
+// v0.35: breaks in the sound this time and last time, and the keyboard test (the same as the web version's sound test)
+
+#define KEYLOG_LINES 12
+static char keyLog[KEYLOG_LINES][96];
+static int32_t keyLogCount;
+static bool prevDropRead, prevDropKnown;
+static int32_t prevDropN;
+static char prevDropEngine[64], prevDropBuffer[64], sessionId[40];
+
+static bool dropFilePath(char *out, size_t outLen)
+{
+	wchar_t local[MAX_PATH];
+	if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA | CSIDL_FLAG_CREATE, NULL, SHGFP_TYPE_CURRENT, local)))
+		return false;
+	char *u8 = bt2Utf8(local);
+	if (u8 == NULL)
+		return false;
+	char folder[1024];
+	snprintf(folder, sizeof (folder), "%s\\Bernttracker II", u8);
+	free(u8);
+	if (!bt2FsMkdirs(folder))
+		return false;
+	snprintf(out, outLen, "%s\\avbrudd.txt", folder);
+	return true;
+}
+
+static void readPrevDropouts(void) // (once: what the last session wrote)
+{
+	if (prevDropRead)
+		return;
+	prevDropRead = true;
+	snprintf(sessionId, sizeof (sessionId), "%lu-%llu", (unsigned long)GetCurrentProcessId(), (unsigned long long)GetTickCount64());
+
+	char path[1100];
+	size_t len = 0;
+	char *text = dropFilePath(path, sizeof (path)) ? (char *)bt2FsReadAll(path, &len, 4096) : NULL;
+	if (text == NULL)
+		return;
+
+	for (char *line = strtok(text, "\r\n"); line != NULL; line = strtok(NULL, "\r\n"))
+	{
+		if (!strncmp(line, "n=", 2)) { prevDropN = atoi(line + 2); prevDropKnown = true; }
+		else if (!strncmp(line, "motor=", 6)) snprintf(prevDropEngine, sizeof (prevDropEngine), "%s", line + 6);
+		else if (!strncmp(line, "buffer=", 7)) snprintf(prevDropBuffer, sizeof (prevDropBuffer), "%s", line + 7);
+	}
+	free(text);
+}
+
+static const char *engineName(void);
+
+void bt2SaveDropouts(void)
+{
+	static uint32_t lastSave;
+	static int32_t lastN = -1;
+	static uint32_t lastDev;
+
+	readPrevDropouts();
+	const uint32_t now = SDL_GetTicks();
+	const int32_t n = audioDropouts();
+	if ((n == lastN && audio.dev == lastDev) || now - lastSave < 2000)
+		return;
+
+	char path[1100], text[300];
+	if (!dropFilePath(path, sizeof (path)))
+		return;
+
+	const int len = snprintf(text, sizeof (text), "id=%s\nn=%d\nmotor=%s\nbuffer=%u samples\n", sessionId, n, engineName(), audio.haveSamples);
+	if (len > 0 && len < (int)sizeof (text))
+		bt2FsWriteReplace(path, text, (size_t)len);
+
+	lastSave = now;
+	lastN = n;
+	lastDev = audio.dev;
+}
+
+static void logKey(const SDL_KeyboardEvent *k)
+{
+	if (keyLogCount == KEYLOG_LINES)
+	{
+		memmove(keyLog[0], keyLog[1], sizeof (keyLog[0]) * (KEYLOG_LINES - 1));
+		keyLogCount--;
+	}
+
+	snprintf(keyLog[keyLogCount++], sizeof (keyLog[0]), "%s %s  \xC2\xAB%s\xC2\xBB  %d%s",
+		(k->type == SDL_KEYDOWN) ? "\xE2\x86\x93" : "\xE2\x86\x91", // ↓ / ↑
+		SDL_GetScancodeName(k->keysym.scancode), SDL_GetKeyName(k->keysym.sym), (int)k->keysym.scancode,
+		k->repeat ? " (gjentatt)" : "");
+}
+
 static void buildDiagText(char *out, size_t outLen)
 {
 	char engine[120], buffer[160], extra[120], win[80];
@@ -326,15 +416,30 @@ static void buildDiagText(char *out, size_t outLen)
 	else
 		latency[0] = '\0';
 
+	readPrevDropouts();
+	char drops[200], prev[200] = "";
+	snprintf(drops, sizeof (drops), "Avbrudd i lyden: %d siden start\n", audioDropouts());
+	if (prevDropKnown)
+		snprintf(prev, sizeof (prev), "Forrige gang:   %d avbrudd (%s, buffer %s)\n", prevDropN, prevDropEngine, prevDropBuffer);
+
+	char keys[KEYLOG_LINES * 100 + 100];
+	int32_t p = snprintf(keys, sizeof (keys), "Tastaturtest (trykk taster mens denne er \xC3\xA5pen):\n");
+	if (keyLogCount == 0)
+		snprintf(keys + p, sizeof (keys) - p, "  (ingen taster trykket enn\xC3\xA5)");
+	for (int32_t i = 0; i < keyLogCount && p < (int32_t)sizeof (keys) - 100; i++)
+		p += snprintf(keys + p, sizeof (keys) - p, "  %s%s", keyLog[i], (i + 1 < keyLogCount) ? "\n" : "");
+
 	snprintf(out, outLen,
 		"Motor:          %s\n"
 		"Plattform:      Windows (program)\n"
 		"Versjon:        %s · %s\n"
 		"Samplerate:     %u Hz\n"
 		"Lydbuffer:      %s\n"
-		"%s%s"
-		"System:         %s",
-		engine, BT2_VERSION, BT2_DATE, audio.haveFreq, buffer, extra, latency, win);
+		"%s%s%s%s"
+		"System:         %s\n"
+		" \n"
+		"%s",
+		engine, BT2_VERSION, BT2_DATE, audio.haveFreq, buffer, extra, latency, drops, prev, win, keys);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1043,7 +1148,7 @@ static void buildDiag(bt2Canvas *c)
 	text(c, title, 0.0f, y, vw, lt, BT2_ALIGN_CENTER, C_TEXT, "Lydtest");
 	y += lt + 14.0f;
 
-	char diag[1200];
+	char diag[4000];
 	buildDiagText(diag, sizeof (diag));
 
 	bt2Font mono = fontCss(14.0f, 400);
@@ -1448,6 +1553,16 @@ bool bt2StartScreen(void)
 				}
 				break;
 
+				case SDL_KEYUP:
+				{
+					if (diagOpen)
+					{
+						logKey(&e.key);
+						needRender = true;
+					}
+				}
+				break;
+
 				case SDL_KEYDOWN:
 				{
 					const SDL_Keycode k = e.key.keysym.sym;
@@ -1463,9 +1578,14 @@ bool bt2StartScreen(void)
 
 					if (diagOpen)
 					{
-						if (k == SDLK_ESCAPE || k == SDLK_RETURN || k == SDLK_KP_ENTER || k == SDLK_SPACE)
+						if (k == SDLK_ESCAPE) // (v0.35: other keys are shown in the keyboard test)
 						{
 							diagOpen = false;
+							needRender = true;
+						}
+						else
+						{
+							logKey(&e.key);
 							needRender = true;
 						}
 						break;

@@ -406,9 +406,62 @@ void rescanMidiInputDevices(void)
 	setScrollBarPos(SB_MIDI_INPUT_SCROLL, 0, DONT_TRIGGER_CALLBACK);
 }
 
+#ifdef __EMSCRIPTEN__
+// BerntTracker (v0.35): the list of MIDI inputs changed in the browser: open the one from the config (or the first)
+void webMidiReopen(void)
+{
+	if (midiInDev == NULL)
+		return;
+
+	closeMidiInDevice();
+	setMidiInputDeviceFromConfig();
+	openMidiInDevice(midi.inputDevice);
+}
+
+static void webMidiLines(const char *a, const char *b, const char *c) // (Norwegian, UTF-8)
+{
+	const char *lines[3] = { a, b, c };
+	for (int32_t i = 0; i < 3; i++)
+	{
+		if (lines[i] == NULL)
+			continue;
+
+		char *cp = utf8ToCp850((char *)lines[i], false);
+		if (cp != NULL)
+		{
+			textOut(114, 4 + (i * 11), PAL_FORGRND, cp);
+			free(cp);
+		}
+	}
+}
+#endif
+
 void drawMidiInputList(void)
 {
 	clearRect(114, 4, 365, 165);
+
+#ifdef __EMSCRIPTEN__
+	const int32_t state = webMidiState();
+	if (state == 0)
+	{
+		webMidiLines("MIDI virker ikke i Safari p\xC3\xA5 iPad enn\xC3\xA5",
+			"(Apple st\xC3\xB8tter ikke Web MIDI). Virker i Chrome/Edge",
+			"p\xC3\xA5 PC/Mac og i Windows-programmet.");
+		return;
+	}
+	else if (state == 1)
+	{
+		webMidiLines("Nettleseren m\xC3\xA5 f\xC3\xA5 lov til \xC3\xA5 bruke MIDI:",
+			"svar \xC2\xABTillat\xC2\xBB p\xC3\xA5 sp\xC3\xB8rsm\xC3\xA5let fra nettleseren.", NULL);
+		return;
+	}
+	else if (midiInDev == NULL || midi.numInputDevices == 0)
+	{
+		webMidiLines("Ingen MIDI-enheter funnet.",
+			"Koble til et MIDI-keyboard, s\xC3\xA5 kommer det her.", NULL);
+		return;
+	}
+#endif
 
 	if (!midi.initThreadDone || midiInDev == NULL || midi.numInputDevices == 0)
 	{

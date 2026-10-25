@@ -811,6 +811,10 @@ void unlockMixerCallback(void)
 		unlockAudio();
 }
 
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+static volatile bool dropTimingReset = true; // BerntTracker (v0.35): see countDropouts()
+#endif
+
 void pauseAudio(void) // lock audio + clear voices/scopes + render silence (for long operations)
 {
 	if (audioPaused)
@@ -864,6 +868,9 @@ void resumeAudio(void) // unlock audio
 		SDL_PauseAudioDevice(audio.dev, false);
 #endif
 
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	dropTimingReset = true; // (the pause itself is not a break)
+#endif
 	audioPaused = false;
 }
 
@@ -935,6 +942,41 @@ static void fillVisualsSyncBuffer(void)
 	}
 }
 
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+/* BerntTracker (Windows, v0.35): breaks in the sound ("Avbrudd i lyden" in the sound test, like the web version).
+** The sound card asks for a new block when it has room for one. If it asks more than two blocks (+4 ms) after the
+** last time, what it had to play ran out: a break you can hear. (Not counted the first second after the sound was
+** opened or started again.)
+*/
+static uint64_t dropLastCb, dropStartCb;
+static volatile int32_t dropCount;
+
+int32_t audioDropouts(void)
+{
+	return dropCount;
+}
+
+static void countDropouts(int32_t samples)
+{
+	const uint64_t now = SDL_GetPerformanceCounter();
+	const double freq = (double)SDL_GetPerformanceFrequency();
+
+	if (dropTimingReset || audio.haveFreq == 0)
+	{
+		dropTimingReset = false;
+		dropLastCb = dropStartCb = now;
+		return;
+	}
+
+	const double gapMs = (now - dropLastCb) * 1000.0 / freq;
+	const double blockMs = samples * 1000.0 / audio.haveFreq;
+	if ((now - dropStartCb) > (uint64_t)freq && gapMs > blockMs * 2.0 + 4.0)
+		dropCount++;
+
+	dropLastCb = now;
+}
+#endif
+
 static void audioCallback(void *userdata, Uint8 *stream, int len)
 {
 	if (editor.wavIsRendering)
@@ -946,6 +988,10 @@ static void audioCallback(void *userdata, Uint8 *stream, int len)
 	len >>= smpShiftValue; // bytes -> samples
 	if (len <= 0)
 		return;
+
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	countDropouts(len);
+#endif
 
 	audio.callbackOngoing = true;
 
@@ -1165,6 +1211,10 @@ bool setupAudio(bool showErrorMsg)
 	}
 
 	// test if the received audio format is compatible
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	dropTimingReset = true; // (a new sound device: start measuring again)
+#endif
+
 	if (have.format != AUDIO_S16 && have.format != AUDIO_F32)
 	{
 		if (showErrorMsg)

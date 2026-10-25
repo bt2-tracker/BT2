@@ -239,6 +239,9 @@ bool testAudioDeviceListsMouseDown(void)
 	if (my < 84)
 	{
 		// output device list
+#ifdef __EMSCRIPTEN__
+		return true; // (BerntTracker, v0.35: no list on the web, the browser chooses)
+#endif
 
 		const int32_t deviceNum = (int32_t)scrollBars[SB_AUDIO_OUTPUT_SCROLL].pos + ((my - 18) / 11);
 		if (audio.outputDeviceNum <= 0 || deviceNum >= audio.outputDeviceNum)

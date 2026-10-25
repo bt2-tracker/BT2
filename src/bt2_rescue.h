@@ -22,5 +22,6 @@ void bt2RescueTick(void);      // every frame in the main loop (asks at start, w
 void bt2RescueOnExit(void);    // the program is closed normally: a last copy if the song is unsaved, else delete it
 void bt2RescueAfterLoad(void); // a song was loaded: if it was the rescue copy, give it back its name and folder
 bool bt2RescueNow(void);       // write the copy right away if there are unsaved changes (e.g. the app goes to the background)
+bool bt2RescueOnCrash(void);   // the program crashed: true if nothing is lost (no unsaved changes, or the copy was written)
 
 #endif

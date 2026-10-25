@@ -315,6 +315,21 @@ void bt2RescueTick(void)
 	if (!ready)
 		return;
 
+#if defined _WIN32 && !defined __EMSCRIPTEN__
+	// (for the automatic tests only: BT2_TEST_CRASH=<seconds> makes the program crash that long after the start)
+	static uint32_t crashAt = 1;
+	if (crashAt == 1)
+	{
+		wchar_t v[16];
+		crashAt = (GetEnvironmentVariableW(L"BT2_TEST_CRASH", v, 16) > 0) ? nowMs() + (uint32_t)_wtoi(v) * 1000 : 0;
+	}
+	if (crashAt > 1 && nowMs() > crashAt)
+	{
+		crashAt = 0;
+		RaiseException(EXCEPTION_ACCESS_VIOLATION, 0, 0, NULL);
+	}
+#endif
+
 #ifdef __EMSCRIPTEN__
 	if (!bt2_rescueStarted()) // (the web page's start screen is still shown, or this copy of the app stores nothing)
 		return;
@@ -369,6 +384,21 @@ bool bt2RescueNow(void)
 
 	if (copyOnDisk && bt2SongEditCount == copiedCount)
 		return true; // (the copy is up to date)
+
+	return writeCopy();
+}
+
+bool bt2RescueOnCrash(void)
+{
+	init();
+	if (!song.isModified)
+		return true; // (nothing to rescue)
+
+	if (!ready || !asked || restoring)
+		return false; // (an older copy hasn't been offered yet: don't write over it)
+
+	if (copyOnDisk && bt2SongEditCount == copiedCount)
+		return true;
 
 	return writeCopy();
 }

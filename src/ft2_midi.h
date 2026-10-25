@@ -37,4 +37,11 @@ void sbMidiInputSetPos(uint32_t pos);
 bool testMidiInputDeviceListMouseDown(void);
 int32_t initMidiFunc(void *ptr);
 
+#ifdef __EMSCRIPTEN__
+// BerntTracker (v0.35): Web MIDI (bt2_webmidi.c)
+void webMidiRequest(void);
+int32_t webMidiState(void); // 0 = no Web MIDI in this browser, 1 = not allowed (yet), 2 = ready
+void webMidiReopen(void);
+#endif
+
 #endif
